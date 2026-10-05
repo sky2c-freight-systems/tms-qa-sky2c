@@ -1,0 +1,48 @@
+@import "tailwindcss";
+
+/*
+ * No dark mode, ever. Tailwind's `dark:` variant defaults to following the
+ * OS/browser `prefers-color-scheme`, which is what was flipping table/input/dropdown
+ * backgrounds to near-black across the app for users with a dark OS theme. This
+ * redefines `dark:` to only apply under a `.dark` class we never add anywhere, so
+ * every `dark:*` utility in the codebase is permanently inert — background stays
+ * white and text stays black regardless of the visitor's OS setting.
+ */
+@custom-variant dark (&:where(.__never-enabled-dark-mode__, .__never-enabled-dark-mode__ *));
+
+/*
+ * Vhaul4u TMS brand palette, sampled from https://www.vhaul4u.us/'s production
+ * CSS bundle (header bar / CTA button / logo / text colors, not just its favicon):
+ *   - brand (red)   #FF0000 — CTA buttons, primary actions, active states
+ *   - navy          #002946 — header/footer bars, secondary buttons, logo mark
+ *   - ink           #0a353b — headings/labels (their dark "text" color)
+ *   - muted         #6c8689 — secondary/placeholder text
+ *   - warning       #e35f31 — validation/error states (their actual error color)
+ */
+:root {
+  --background: #ffffff;
+  --foreground: #000000;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+
+  --color-brand: #FF0000;
+  --color-brand-dark: #CC0000;
+  --color-navy: #002946;
+  --color-navy-dark: #00192e;
+  --color-ink: #0a353b;
+  --color-muted: #6c8689;
+  --color-warning: #e35f31;
+  --color-surface: #f5f7f7;
+  --color-border-light: #e4e6e8;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}

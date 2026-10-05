@@ -1,0 +1,89 @@
+name: Deploy QA
+
+on:
+  push:
+    branches: [main]
+
+# Both runs from two quick pushes were left free to run concurrently on the
+# same self-hosted runner/server, which raced each other against the same
+# C:\Apps\tms-qa and TMS-QA service and left things in a broken state even
+# though the LATER commit's run reported success. Serialize instead: a push
+# while a deploy is already running waits for it to finish rather than racing
+# it - never cancels one mid-flight, since that could leave the service
+# stopped with nothing to restart it.
+concurrency:
+  group: deploy-qa
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      # Builds directly in the live directory (brief downtime during the build,
+      # ~2-3 min). We previously tried building in a separate staging folder and
+      # renaming it into place for zero downtime, but Next.js/Turbopack bakes
+      # something path-dependent into its build output for external modules
+      # (Prisma's generated client) - renaming the folder afterward broke every
+      # Prisma-dependent route with "Cannot find module '@prisma/client-<hash>'".
+      # Reliability matters more here than shaving the downtime window, so this
+      # trades the zero-downtime attempt for a guaranteed-correct build.
+
+      - name: Stop QA service
+        shell: powershell
+        run: |
+          nssm stop TMS-QA
+          $waited = 0
+          while ((Get-Service TMS-QA).Status -ne 'Stopped' -and $waited -lt 30) {
+            Start-Sleep -Seconds 2
+            $waited += 2
+          }
+          exit 0
+
+      - name: Sync to app directory
+        shell: powershell
+        run: |
+          robocopy "$env:GITHUB_WORKSPACE" "C:\Apps\tms-qa" /MIR /XF .env /XD .git .github node_modules .next logs
+          if ($LASTEXITCODE -ge 8) { exit 1 } else { exit 0 }
+
+      - name: Install dependencies and build
+        shell: powershell
+        working-directory: C:\Apps\tms-qa
+        run: |
+          npm ci
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npx prisma generate
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Start QA service
+        shell: powershell
+        if: always()
+        run: |
+          New-Item -ItemType Directory -Force -Path "C:\Apps\tms-qa\logs" | Out-Null
+
+          nssm start TMS-QA
+          Start-Sleep -Seconds 5
+
+          $svc = Get-Service TMS-QA
+          $attempts = 0
+          while ($svc.Status -ne 'Running' -and $attempts -lt 5) {
+            Write-Host "Service status is '$($svc.Status)', retrying start (attempt $($attempts + 1))..."
+            nssm start TMS-QA
+            Start-Sleep -Seconds 5
+            $svc = Get-Service TMS-QA
+            $attempts++
+          }
+
+          if ($svc.Status -ne 'Running') {
+            Write-Host "=== Service failed to start after retries. stderr.log tail: ==="
+            Get-Content "C:\Apps\tms-qa\logs\stderr.log" -Tail 80 -ErrorAction SilentlyContinue
+            Write-Host "=== stdout.log tail: ==="
+            Get-Content "C:\Apps\tms-qa\logs\stdout.log" -Tail 80 -ErrorAction SilentlyContinue
+            exit 1
+          }
+
+          Write-Host "Service is running."
+          exit 0

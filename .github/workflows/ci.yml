@@ -1,0 +1,39 @@
+name: CI
+
+# Type-checking and linting used to run inside `next build` on every deploy, on a
+# Docker host with only 1 CPU available — an 18+ minute tsc pass on every deploy,
+# and the direct cause of a build getting killed mid static-generation (see
+# next.config.ts). Moving both checks here means they run once per push/PR, on a
+# GitHub-hosted runner with real CPU, in parallel with (not inside) the deploy.
+
+on:
+  push:
+    branches: [main, qa]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck-and-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Type-check
+        run: npx tsc --noEmit
+
+      - name: Lint
+        run: npm run lint

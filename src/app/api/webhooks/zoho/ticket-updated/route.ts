@@ -8,6 +8,7 @@ import {
   buildComparableFields,
   buildTruncatedDraft,
   extractEventEnvelope,
+  resolveCustomFields,
   resolveTicketMeta,
   truncate,
   MAX_TEXT_LEN,
@@ -21,6 +22,7 @@ import {
 import { autoCreateInvoiceForShipment, syncInvoiceAmountToShipment } from "@/lib/billing";
 import { mapZohoStatusToShipmentStatus } from "@/lib/zohoStatusMap";
 import { recordStatusChange } from "@/lib/tracking";
+import { zohoCfToSectionData } from "@/lib/shipmentZohoSections";
 
 /**
  * Zoho Desk "Ticket_Update" webhook. Same body shape as ticket-created plus a
@@ -53,6 +55,11 @@ export async function POST(request: Request) {
   // {} so comparison just treats every current field as "changed" — the safe direction,
   // since it triggers the re-resolve fix rather than silently skipping it.
   const prevState = (envelope.prevState ?? {}) as Record<string, unknown>;
+
+  // Zoho's empty-body URL validation request on webhook save — no ticket, nothing to sync.
+  if (Object.keys(payload).length === 0) {
+    return NextResponse.json({ received: true }, { status: 200 });
+  }
 
   const meta = resolveTicketMeta(payload);
   const zohoTicketId = meta.ticketId || `unknown-${randomUUID()}`;
@@ -175,11 +182,14 @@ export async function POST(request: Request) {
       origin: draft.origin,
       destination: draft.destination,
       proNumber: draft.proNumber,
+      bolNumber: draft.bolNumber,
       cargoDescription: draft.cargoDescription,
       dryRun: draft.dryRun,
       domesticType: draft.domesticType,
       totalChargesCents: draft.totalChargesCents ?? undefined,
       shipAt: draft.shipAt ?? undefined,
+      // Dispatch / Pickup section fields (src/lib/shipmentZohoSections.ts).
+      ...zohoCfToSectionData(resolveCustomFields(payload)),
     };
 
     // Zoho ticket status -> shipment status, one leg of the two-way sync (the other

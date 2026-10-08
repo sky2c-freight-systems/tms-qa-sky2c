@@ -269,6 +269,37 @@ model DomesticWarehouseShipment {
   totalChargesCents   Int?
   serviceLevel        String?
 
+  // Zoho Desk ticket layout fields with no existing Shipment equivalent — see
+  // src/lib/shipmentZohoSections.ts for their sections, types and Zoho API names.
+  // Dispatch Instructions
+  shipperStatus     String? // cf_shipper_1 (Known / Yet to Confirm / Unknown)
+  quoteBasis        String?
+  quotedBy          String?
+  palletsDimensions String?
+  grossWeight       Float?
+  volumetricWeight  Float?
+  chargeableWeight  Float?
+  stackableTurnable String[] // multiselect
+  serviceType       String? // Door to Port / Door to Door — distinct from typeOfService
+  // Pickup Instructions
+  contactDetails     String?
+  locationType       String?
+  dockHours          String?
+  soNumber           String?
+  preferredPickupAt  DateTime?
+  pickupInstructions String?
+  // Dispatch Operations
+  dispatchRoute              String?
+  warehouseLocation          String?
+  carrierPicklist            String? // Zoho "Carrier-Name" picklist; the Carrier client is carrierId
+  pickupRefNumber            String?
+  estimatedTruckingCostCents Int?
+  pickupScheduleAt           DateTime?
+  etaForPickupAt             DateTime?
+  etaAtWarehouseAt           DateTime?
+  onHandAt                   DateTime?
+  onHandDetails              String?
+
   billableStatus BillableStatus @default(NOT_APPLICABLE) // rollup of arInvoices, recomputed on every invoice status change
   isActive       Boolean        @default(true)
   createdBy      String?        @db.ObjectId

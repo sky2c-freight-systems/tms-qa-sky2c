@@ -42,7 +42,7 @@ export function firstNonEmpty(obj: Record<string, unknown> | null | undefined, .
 
 // Org-specific quote-amount custom-field key variants. Kept as an exported array so
 // adding another variant later (e.g. "cf_quote_amount_3") is a one-line change.
-export const QUOTE_AMOUNT_KEYS = ["cf_quote_amount", "cf_quote_amount_2"];
+export const QUOTE_AMOUNT_KEYS = ["cf_quote_amount_1", "cf_quote_amount", "cf_quote_amount_2"];
 
 /** dollarsToCents throws on unparsable input; custom-field text is operator-entered and may not be a valid number, so this wraps it defensively. */
 export function safeDollarsToCents(raw: string): number | null {
@@ -126,7 +126,8 @@ export interface ContactInfo {
 }
 
 /**
- * Extracts contact email/phone and the nested Account name. Tries `node.contact` and
+ * Extracts contact email/phone and the nested Account name (or the contact's own name
+ * when no Account is linked). Tries `node.contact` and
  * `node.ticket.contact` for the contact object (covers `payload.contact.account.accountName`
  * and `payload.ticket.contact.account.accountName` shapes per the integration spec).
  */
@@ -145,7 +146,10 @@ export function resolveContactInfo(node: unknown): ContactInfo {
   const email = firstNonEmpty(contact, "email");
   const phone = firstNonEmpty(contact, "phone", "mobile");
   const account = (contact?.account ?? undefined) as Record<string, unknown> | undefined;
-  const accountName = firstNonEmpty(account, "accountName");
+  // Most Zoho Desk contacts aren't linked to an Account, so fall back to the contact
+  // itself (full name, then email) as the shipment's account.
+  const contactName = [firstNonEmpty(contact, "firstName"), firstNonEmpty(contact, "lastName")].filter(Boolean).join(" ");
+  const accountName = firstNonEmpty(account, "accountName") || contactName || email;
   return { email, phone, accountName };
 }
 
@@ -178,8 +182,10 @@ export function mapCustomFieldsToDraft(cf: Record<string, unknown>): RawShipment
     // ticket payload — org custom-field API names don't always match their UI labels
     // (see cf_pickup_country actually holding "Reference Number" in pushFileNumberToZohoTicket).
     bolNumber: firstNonEmpty(cf, "cf_bol_number", "cf_bol"),
-    shipDateRaw: firstNonEmpty(cf, "cf_etd", "cf_ship_date", "cf_pickup_date_1"),
-    cargoDescription: firstNonEmpty(cf, "cf_cargo_description"),
+    // Shown as "Pickup Date" in the Dispatch Operations section (src/lib/shipmentZohoSections.ts).
+    shipDateRaw: firstNonEmpty(cf, "cf_pickup_date", "cf_etd", "cf_ship_date", "cf_pickup_date_1"),
+    // Shown as "Commodity Detail" in the Dispatch Instructions section.
+    cargoDescription: firstNonEmpty(cf, "cf_commodity_detail", "cf_cargo_description"),
     domesticTypeRaw: firstNonEmpty(cf, "cf_domestic_type", "cf_service_type") || "Truck",
     quoteAmountRaw: firstNonEmpty(cf, ...QUOTE_AMOUNT_KEYS),
     dryRunRaw: firstNonEmpty(cf, "cf_multiple_quotes"),

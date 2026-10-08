@@ -1,7 +1,8 @@
 import { prisma } from "@/lib/prisma";
 import { findOrCreateClient } from "@/lib/clientService";
 import { generateFileNumber } from "@/lib/numbering";
-import { buildTruncatedDraft, resolveTicketMeta } from "@/lib/zohoMapping";
+import { buildTruncatedDraft, resolveCustomFields, resolveTicketMeta } from "@/lib/zohoMapping";
+import { zohoCfToSectionData } from "@/lib/shipmentZohoSections";
 import { pushFileNumberToZohoTicket } from "@/lib/zohoDeskApi";
 import { autoCreateInvoiceForShipment } from "@/lib/billing";
 import { mapZohoStatusToShipmentStatus } from "@/lib/zohoStatusMap";
@@ -158,6 +159,7 @@ export async function createShipmentForTicket(
       dryRun: draft.dryRun,
       totalChargesCents: draft.totalChargesCents ?? undefined,
       shipAt: draft.shipAt ?? undefined,
+      ...zohoCfToSectionData(resolveCustomFields(payload)),
     },
   });
 

@@ -7,6 +7,7 @@ import ClientForm, {
   makeDefaultClientFormValues,
   clientFormValuesToCreateBody,
 } from "@/components/ClientForm";
+import { LookupActions, LookupBox, LookupDropdown, LookupOption, lookupInputClass } from "@/components/LookupFieldParts";
 
 export interface ClientSummary {
   id: string;
@@ -23,18 +24,18 @@ export interface ClientLookupFieldProps {
   disabled?: boolean;
 }
 
-const fieldButtonClass =
-  "rounded border border-zinc-300 px-2 text-sm whitespace-nowrap hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800";
-
 export default function ClientLookupField({ label, role, value, onChange, required, disabled }: ClientLookupFieldProps) {
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<ClientSummary | null>(null);
   const [suggestions, setSuggestions] = useState<ClientSummary[]>([]);
+  // The query the current `suggestions` were fetched for — lets the dropdown tell
+  // "no matches" apart from "search still in flight".
+  const [searchedQuery, setSearchedQuery] = useState("");
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [searchModalOpen, setSearchModalOpen] = useState(false);
   const [addModalOpen, setAddModalOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
-  const displayText = (c: ClientSummary) => `${c.clientId} — ${c.name}`;
+  const displayText = (c: ClientSummary) => c.name;
 
   // Resolve the incoming `value` (an id) into a displayable summary, e.g. when editing
   // an existing record. Skips the fetch if we already resolved this exact id.
@@ -83,7 +84,10 @@ export default function ClientLookupField({ label, role, value, onChange, requir
         const params = new URLSearchParams({ q: query, limit: "10" });
         if (role) params.set("role", role);
         const res = await fetch(`/api/clients/search?${params.toString()}`);
-        if (res.ok) setSuggestions(await res.json());
+        if (res.ok) {
+          setSuggestions(await res.json());
+          setSearchedQuery(query);
+        }
       } catch {
         // ignore
       }
@@ -116,18 +120,32 @@ export default function ClientLookupField({ label, role, value, onChange, requir
     onChange(null);
   }
 
+  function openSearch() {
+    setShowSuggestions(false);
+    setSearchModalOpen(true);
+  }
+
+  function openAdd() {
+    setShowSuggestions(false);
+    setAddModalOpen(true);
+  }
+
+  const dropdownOpen =
+    showSuggestions && !selected && query.trim() !== "" && (suggestions.length > 0 || searchedQuery === query);
+
   return (
     <div className="flex flex-col gap-1">
       <label className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
         {label} {required && <span className="text-red-500">*</span>}
       </label>
-      <div className="relative flex gap-1" ref={containerRef}>
-        <div className="relative flex-1">
+      <div className="relative" ref={containerRef}>
+        <LookupBox disabled={disabled}>
           <input
-            className="w-full rounded border border-zinc-300 px-2.5 py-1.5 text-sm focus:border-zinc-500 focus:outline-none disabled:bg-zinc-100 dark:border-zinc-700 dark:bg-brand dark:disabled:bg-zinc-800"
+            className={lookupInputClass}
             value={query}
             disabled={disabled}
-            placeholder="Type to search..."
+            placeholder="Search client..."
+            title={selected ? `${selected.name} (${selected.clientId})` : undefined}
             onChange={(e) => {
               setQuery(e.target.value);
               setShowSuggestions(true);
@@ -137,37 +155,28 @@ export default function ClientLookupField({ label, role, value, onChange, requir
               }
             }}
             onFocus={() => setShowSuggestions(true)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") setShowSuggestions(false);
+            }}
           />
-          {showSuggestions && query.trim() && suggestions.length > 0 && (
-            <ul className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded border border-zinc-300 bg-white text-sm shadow-lg dark:border-zinc-700 dark:bg-brand">
-              {suggestions.map((c) => (
-                <li key={c.id}>
-                  <button
-                    type="button"
-                    className="block w-full px-2.5 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800"
-                    onClick={() => pick(c)}
-                  >
-                    <span className="font-mono text-xs text-zinc-500">{c.clientId}</span> — {c.name}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-        {value && !disabled && (
-          <button type="button" title="Clear selection" onClick={clear} className={fieldButtonClass}>
-            ×
-          </button>
+          <LookupActions
+            noun="client"
+            showClear={Boolean(value || query)}
+            onClear={clear}
+            onBrowse={openSearch}
+            onAdd={openAdd}
+            disabled={disabled}
+          />
+        </LookupBox>
+        {dropdownOpen && (
+          <LookupDropdown noun="client" query={query.trim()} empty={suggestions.length === 0} onBrowse={openSearch} onAdd={openAdd}>
+            {suggestions.map((c) => (
+              <LookupOption key={c.id} onPick={() => pick(c)}>
+                {c.name}
+              </LookupOption>
+            ))}
+          </LookupDropdown>
         )}
-        <button type="button" title="Search clients" aria-label="Search clients" disabled={disabled} onClick={() => setSearchModalOpen(true)} className={fieldButtonClass}>
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4">
-            <circle cx="9" cy="9" r="6" />
-            <path d="M13.5 13.5 18 18" strokeLinecap="round" />
-          </svg>
-        </button>
-        <button type="button" title="Add new client" disabled={disabled} onClick={() => setAddModalOpen(true)} className={fieldButtonClass}>
-          + Add new
-        </button>
       </div>
 
       {searchModalOpen && (
@@ -184,6 +193,7 @@ export default function ClientLookupField({ label, role, value, onChange, requir
       {addModalOpen && (
         <ClientAddModal
           role={role}
+          initialName={selected ? "" : query.trim()}
           onClose={() => setAddModalOpen(false)}
           onCreated={(c) => {
             pick(c);
@@ -295,14 +305,16 @@ function ClientSearchModal({
 
 function ClientAddModal({
   role,
+  initialName,
   onClose,
   onCreated,
 }: {
   role?: ClientRole;
+  initialName?: string;
   onClose: () => void;
   onCreated: (client: ClientSummary) => void;
 }) {
-  const [values, setValues] = useState<ClientFormValues>(() => makeDefaultClientFormValues(role));
+  const [values, setValues] = useState<ClientFormValues>(() => ({ ...makeDefaultClientFormValues(role), name: initialName ?? "" }));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 

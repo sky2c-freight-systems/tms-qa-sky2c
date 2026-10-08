@@ -13,6 +13,16 @@ import {
   SHIPMENT_STATUS_LABELS,
   toOptions,
 } from "@/lib/enumLabels";
+import {
+  ZOHO_SECTIONS,
+  emptyExtraFieldValues,
+  extraFieldsToBody,
+  extraFieldsToFormValues,
+  type ExistingSectionFieldKey,
+  type ExtraFieldDef,
+  type ExtraFieldFormValues,
+  type ExtraFieldKey,
+} from "@/lib/shipmentZohoSections";
 
 /**
  * Shared field-set for creating/editing a DomesticWarehouseShipment. Used by both
@@ -21,7 +31,7 @@ import {
  * fetch/submit logic (POST for create, PATCH for edit) — the caller only supplies the
  * starting values and, in edit mode, the fileNumber.
  */
-export interface ShipmentFormValues {
+export interface ShipmentFormValues extends ExtraFieldFormValues {
   domesticType: string;
   status: string;
   accountId: string | null;
@@ -91,6 +101,7 @@ export const EMPTY_SHIPMENT_FORM_VALUES: ShipmentFormValues = {
   dryRun: "",
   totalCharges: "",
   serviceLevel: "",
+  ...emptyExtraFieldValues(),
 };
 
 function toDatetimeLocal(value: unknown): string {
@@ -145,6 +156,7 @@ export function shipmentToFormValues(record: Record<string, unknown> | null | un
     dryRun: str(record.dryRun),
     totalCharges: centsToDollarString(record.totalChargesCents),
     serviceLevel: str(record.serviceLevel),
+    ...extraFieldsToFormValues(record, toDatetimeLocal),
   };
 }
 
@@ -192,6 +204,7 @@ export function shipmentFormValuesToBody(values: ShipmentFormValues): Record<str
     dryRun: orNull(values.dryRun),
     totalCharges: orNull(values.totalCharges),
     serviceLevel: orNull(values.serviceLevel),
+    ...extraFieldsToBody(values),
   };
 }
 
@@ -295,6 +308,129 @@ function DateTimeField({
   );
 }
 
+function TextAreaField({
+  label,
+  value,
+  onChange,
+  disabled,
+  placeholder,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  disabled?: boolean;
+  placeholder?: string;
+}) {
+  return (
+    <label className="flex flex-col gap-1">
+      <span className={fieldLabelClass}>{label}</span>
+      <textarea
+        className={`${inputClass} min-h-20`}
+        value={value}
+        disabled={disabled}
+        placeholder={placeholder}
+        onChange={(e) => onChange(e.target.value)}
+      />
+    </label>
+  );
+}
+
+/** Picklist over plain string options; keeps a current value that isn't in the list (e.g. a newer Zoho option) selectable. */
+function PicklistField({
+  label,
+  value,
+  onChange,
+  options,
+  disabled,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: readonly string[];
+  disabled?: boolean;
+}) {
+  const all = value && !options.includes(value) ? [...options, value] : options;
+  return <SelectField label={label} value={value} onChange={onChange} options={all.map((o) => ({ value: o, label: o }))} disabled={disabled} />;
+}
+
+/** Multiselect as toggle chips; value is the options joined with ";" (Zoho's encoding). */
+function MultiSelectField({
+  label,
+  value,
+  onChange,
+  options,
+  disabled,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: readonly string[];
+  disabled?: boolean;
+}) {
+  const selected = value.split(";").filter(Boolean);
+  const all = [...options, ...selected.filter((s) => !options.includes(s))];
+  function toggle(opt: string) {
+    const next = selected.includes(opt) ? selected.filter((s) => s !== opt) : [...selected, opt];
+    onChange(next.join(";"));
+  }
+  return (
+    <div className="flex flex-col gap-1">
+      <span className={fieldLabelClass}>{label}</span>
+      <div className="flex flex-wrap gap-1.5">
+        {all.map((opt) => {
+          const on = selected.includes(opt);
+          return (
+            <button
+              key={opt}
+              type="button"
+              disabled={disabled}
+              aria-pressed={on}
+              onClick={() => toggle(opt)}
+              className={`rounded-full border px-3 py-1 text-xs transition disabled:opacity-50 ${
+                on
+                  ? "border-brand bg-brand text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900"
+                  : "border-zinc-300 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              }`}
+            >
+              {opt}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ExtraField({
+  field,
+  value,
+  onChange,
+  disabled,
+}: {
+  field: ExtraFieldDef;
+  value: string;
+  onChange: (v: string) => void;
+  disabled?: boolean;
+}) {
+  const common = { label: field.label, value, onChange, disabled };
+  switch (field.type) {
+    case "textarea":
+      return <TextAreaField {...common} />;
+    case "picklist":
+      return <PicklistField {...common} options={field.options ?? []} />;
+    case "multiselect":
+      return <MultiSelectField {...common} options={field.options ?? []} />;
+    case "datetime":
+      return <DateTimeField {...common} />;
+    case "decimal":
+      return <TextField {...common} placeholder="0" />;
+    case "currency":
+      return <TextField {...common} placeholder="0.00" />;
+    default:
+      return <TextField {...common} />;
+  }
+}
+
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="space-y-3 border-t border-zinc-200 pt-4 first:border-t-0 first:pt-0 dark:border-zinc-800">
@@ -362,6 +498,29 @@ export default function ShipmentForm({ mode, fileNumber, initialValues, lockDome
 
   const minDatetime = mode === "create" ? nowDatetimeLocal() : undefined;
 
+  // Existing Shipment fields that sit inside the Zoho sections, labelled as in Zoho.
+  function renderExisting(key: ExistingSectionFieldKey, label: string) {
+    switch (key) {
+      case "origin":
+      case "destination":
+      case "placeOfReceipt":
+        return <LocationLookupField label={label} value={values[key]} onChange={(v) => set(key, v)} disabled={saving} />;
+      case "carrierId":
+        return <ClientLookupField label={label} role="CARRIER" value={values.carrierId} onChange={(id) => set("carrierId", id)} disabled={saving} />;
+      case "incoTerms":
+        return <SelectField label={label} value={values.incoTerms} onChange={(v) => set("incoTerms", v)} options={toOptions(INCOTERMS_LABELS)} disabled={saving} />;
+      case "cargoDescription":
+        return <TextAreaField label={label} value={values.cargoDescription} onChange={(v) => set("cargoDescription", v)} disabled={saving} />;
+      case "shipAt":
+        return <DateTimeField label={label} value={values.shipAt} onChange={(v) => set("shipAt", v)} min={minDatetime} disabled={saving} />;
+      case "totalCharges":
+        return <TextField label={label} value={values.totalCharges} onChange={(v) => set("totalCharges", v)} disabled={saving} placeholder="0.00" />;
+      case "proNumber":
+      case "bolNumber":
+        return <TextField label={label} value={values[key]} onChange={(v) => set(key, v)} disabled={saving} />;
+    }
+  }
+
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
       <Section title="Identification">
@@ -395,21 +554,32 @@ export default function ShipmentForm({ mode, fileNumber, initialValues, lockDome
         <ClientLookupField label="Account" role="ACCOUNT" value={values.accountId} onChange={(id) => set("accountId", id)} disabled={saving} />
         <ClientLookupField label="Shipper" role="SHIPPER" value={values.shipperId} onChange={(id) => set("shipperId", id)} disabled={saving} />
         <ClientLookupField label="Consignee" role="CONSIGNEE" value={values.consigneeId} onChange={(id) => set("consigneeId", id)} disabled={saving} />
-        <ClientLookupField label="Carrier" role="CARRIER" value={values.carrierId} onChange={(id) => set("carrierId", id)} disabled={saving} />
       </Section>
 
+      {ZOHO_SECTIONS.map((section) => (
+        <Section key={section.title} title={section.title}>
+          {section.items.map((item) =>
+            item.kind === "existing" ? (
+              <div key={item.key}>{renderExisting(item.key, item.label)}</div>
+            ) : (
+              <ExtraField
+                key={item.field.key}
+                field={item.field}
+                value={values[item.field.key as ExtraFieldKey]}
+                onChange={(v) => set(item.field.key as ExtraFieldKey, v)}
+                disabled={saving}
+              />
+            )
+          )}
+        </Section>
+      ))}
+
       <Section title="Routing">
-        <LocationLookupField label="Place of Receipt" value={values.placeOfReceipt} onChange={(v) => set("placeOfReceipt", v)} disabled={saving} />
-        <LocationLookupField label="Origin" value={values.origin} onChange={(v) => set("origin", v)} disabled={saving} />
-        <LocationLookupField label="Destination" value={values.destination} onChange={(v) => set("destination", v)} disabled={saving} />
         <LocationLookupField label="Place of Delivery" value={values.placeOfDelivery} onChange={(v) => set("placeOfDelivery", v)} disabled={saving} />
         <TextField label="Country" value={values.country} onChange={(v) => set("country", v)} disabled={saving} />
       </Section>
 
       <Section title="Terms & References">
-        <SelectField label="Inco Terms" value={values.incoTerms} onChange={(v) => set("incoTerms", v)} options={toOptions(INCOTERMS_LABELS)} disabled={saving} />
-        <TextField label="Pro Number" value={values.proNumber} onChange={(v) => set("proNumber", v)} disabled={saving} />
-        <TextField label="BOL Number" value={values.bolNumber} onChange={(v) => set("bolNumber", v)} disabled={saving} />
         <SelectField label="Type of Service" value={values.typeOfService} onChange={(v) => set("typeOfService", v)} options={toOptions(TYPE_OF_SERVICE_LABELS)} disabled={saving} />
         <TextField label="Other Reference" value={values.otherReference} onChange={(v) => set("otherReference", v)} disabled={saving} />
         <SelectField label="Payment Method" value={values.paymentMethod} onChange={(v) => set("paymentMethod", v)} options={toOptions(PAYMENT_METHOD_LABELS)} disabled={saving} />
@@ -418,22 +588,12 @@ export default function ShipmentForm({ mode, fileNumber, initialValues, lockDome
       <Section title="Schedule">
         <DateTimeField label="Transit Start" value={values.transitStartAt} onChange={(v) => set("transitStartAt", v)} min={minDatetime} disabled={saving} />
         <DateTimeField label="Transit End" value={values.transitEndAt} onChange={(v) => set("transitEndAt", v)} min={minDatetime} disabled={saving} />
-        <DateTimeField label="Ship At" value={values.shipAt} onChange={(v) => set("shipAt", v)} min={minDatetime} disabled={saving} />
         <DateTimeField label="Cutoff At" value={values.cutoffAt} onChange={(v) => set("cutoffAt", v)} min={minDatetime} disabled={saving} />
         <DateTimeField label="ETA" value={values.etaAt} onChange={(v) => set("etaAt", v)} min={minDatetime} disabled={saving} />
         <DateTimeField label="ATD" value={values.atdAt} onChange={(v) => set("atdAt", v)} min={minDatetime} disabled={saving} />
       </Section>
 
       <Section title="Cargo & Charges">
-        <label className="col-span-full flex flex-col gap-1">
-          <span className={fieldLabelClass}>Cargo Description</span>
-          <textarea
-            className={`${inputClass} min-h-20`}
-            value={values.cargoDescription}
-            disabled={saving}
-            onChange={(e) => set("cargoDescription", e.target.value)}
-          />
-        </label>
         <TextField label="Insurance" value={values.insurance} onChange={(v) => set("insurance", v)} disabled={saving} />
         <TextField label="Insurance Value ($)" value={values.insuranceValue} onChange={(v) => set("insuranceValue", v)} disabled={saving} placeholder="0.00" />
         <TextField label="COD Fee ($)" value={values.codFee} onChange={(v) => set("codFee", v)} disabled={saving} placeholder="0.00" />
@@ -447,7 +607,6 @@ export default function ShipmentForm({ mode, fileNumber, initialValues, lockDome
             onChange={(e) => set("dryRun", e.target.value)}
           />
         </label>
-        <TextField label="Total Charges ($)" value={values.totalCharges} onChange={(v) => set("totalCharges", v)} disabled={saving} placeholder="0.00" />
         <TextField label="Service Level" value={values.serviceLevel} onChange={(v) => set("serviceLevel", v)} disabled={saving} />
       </Section>
 

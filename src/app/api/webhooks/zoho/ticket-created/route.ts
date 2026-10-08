@@ -30,6 +30,12 @@ export async function POST(request: Request) {
   const envelope = extractEventEnvelope(parsedBody);
   const payload = (envelope.payload ?? envelope) as Record<string, unknown>;
 
+  // Zoho sends an empty-body request (`{}`) to validate the URL when a webhook is saved.
+  // There's no ticket in it, so don't record a sync row or create a shipment for it.
+  if (Object.keys(payload).length === 0) {
+    return NextResponse.json({ received: true }, { status: 200 });
+  }
+
   const meta = resolveTicketMeta(payload);
   // zohoTicketId is a required unique key on ZohoSync; fall back to a generated id in the
   // (unexpected) case neither payload shape yields one, so we can still record the raw

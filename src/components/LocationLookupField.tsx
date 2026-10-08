@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type SubmitEvent } from "react";
 import LocationForm, { EMPTY_LOCATION_FORM_VALUES, locationFormValuesToBody, type LocationFormValues } from "@/components/LocationForm";
+import { LookupActions, LookupBox, LookupDropdown, LookupOption, lookupInputClass } from "@/components/LookupFieldParts";
 
 interface LocationSummary {
   id: string;
@@ -15,9 +16,6 @@ export interface LocationLookupFieldProps {
   required?: boolean;
   disabled?: boolean;
 }
-
-const fieldButtonClass =
-  "rounded border border-zinc-300 px-2 text-sm whitespace-nowrap hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800";
 
 export default function LocationLookupField({ label, value, onChange, required, disabled }: LocationLookupFieldProps) {
   const [suggestions, setSuggestions] = useState<LocationSummary[]>([]);
@@ -62,46 +60,65 @@ export default function LocationLookupField({ label, value, onChange, required, 
     setShowSuggestions(false);
   }
 
+  function openSearch() {
+    setShowSuggestions(false);
+    setSearchModalOpen(true);
+  }
+
+  function openAdd() {
+    setShowSuggestions(false);
+    setAddModalOpen(true);
+  }
+
+  // Free text is a valid value here, so only open the dropdown when there's something
+  // to pick — an unmatched entry just stays as typed. Hide it once the text exactly
+  // matches the only suggestion (i.e. it was just picked).
+  const dropdownOpen =
+    showSuggestions &&
+    value.trim() !== "" &&
+    suggestions.length > 0 &&
+    !(suggestions.length === 1 && suggestions[0].name === value);
+
   return (
     <div className="flex flex-col gap-1">
       <label className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
         {label} {required && <span className="text-red-500">*</span>}
       </label>
-      <div className="relative flex gap-1" ref={containerRef}>
-        <div className="relative flex-1">
+      <div className="relative" ref={containerRef}>
+        <LookupBox disabled={disabled}>
           <input
-            className="w-full rounded border border-zinc-300 px-2.5 py-1.5 text-sm focus:border-zinc-500 focus:outline-none disabled:bg-zinc-100 dark:border-zinc-700 dark:bg-brand dark:disabled:bg-zinc-800"
+            className={lookupInputClass}
             value={value}
             disabled={disabled}
-            placeholder="Type to search or enter free text..."
+            placeholder="Search or type a location..."
+            title={value || undefined}
             onChange={(e) => {
               onChange(e.target.value);
               setShowSuggestions(true);
             }}
             onFocus={() => setShowSuggestions(true)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") setShowSuggestions(false);
+            }}
           />
-          {showSuggestions && value.trim() && suggestions.length > 0 && (
-            <ul className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded border border-zinc-300 bg-white text-sm shadow-lg dark:border-zinc-700 dark:bg-brand">
-              {suggestions.map((loc) => (
-                <li key={loc.id}>
-                  <button
-                    type="button"
-                    className="block w-full px-2.5 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800"
-                    onClick={() => pick(loc)}
-                  >
-                    {loc.name}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-        <button type="button" title="Search locations" disabled={disabled} onClick={() => setSearchModalOpen(true)} className={fieldButtonClass}>
-          Search
-        </button>
-        <button type="button" title="Add new location" disabled={disabled} onClick={() => setAddModalOpen(true)} className={fieldButtonClass}>
-          + Add new
-        </button>
+          <LookupActions
+            noun="location"
+            showClear={Boolean(value)}
+            onClear={() => onChange("")}
+            onBrowse={openSearch}
+            onAdd={openAdd}
+            disabled={disabled}
+          />
+        </LookupBox>
+        {dropdownOpen && (
+          <LookupDropdown noun="location" query={value.trim()} empty={false} onBrowse={openSearch} onAdd={openAdd}>
+            {suggestions.map((loc) => (
+              <LookupOption key={loc.id} onPick={() => pick(loc)}>
+                {loc.name}
+              </LookupOption>
+            ))}
+          </LookupDropdown>
+        )}
       </div>
 
       {searchModalOpen && (

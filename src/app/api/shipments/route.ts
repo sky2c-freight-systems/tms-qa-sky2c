@@ -9,6 +9,7 @@ import { dollarsToCents } from "@/lib/money";
 import { autoCreateInvoiceForShipment, computeShipmentTotalChargesCents } from "@/lib/billing";
 import { buildZohoTicketUrl } from "@/lib/zohoTicketUrl";
 import { sendOrderConfirmationEmail } from "@/lib/orderConfirmationEmail";
+import { extraFieldsToPrismaData, extraFieldsZodShape } from "@/lib/shipmentZohoSections";
 
 const DOMESTIC_TYPE_VALUES = Object.values(DomesticType) as [DomesticType, ...DomesticType[]];
 const SHIPMENT_STATUS_VALUES = Object.values(ShipmentStatus) as [ShipmentStatus, ...ShipmentStatus[]];
@@ -167,6 +168,7 @@ const createShipmentSchema = z.object({
   dryRun: z.string().nullish(),
   totalCharges: dollarAmount,
   serviceLevel: z.string().nullish(),
+  ...extraFieldsZodShape,
 });
 
 function toDateOrNull(value: string | null | undefined): Date | null {
@@ -206,7 +208,9 @@ export async function POST(request: Request) {
   let cutoffAt: Date | null;
   let etaAt: Date | null;
   let atdAt: Date | null;
+  let extraData: Record<string, unknown>;
   try {
+    extraData = extraFieldsToPrismaData(data);
     insuranceValueCents = dollarsToCents(data.insuranceValue ?? undefined);
     codFeeCents = dollarsToCents(data.codFee ?? undefined);
     totalChargesCents = dollarsToCents(data.totalCharges ?? undefined);
@@ -263,6 +267,7 @@ export async function POST(request: Request) {
       codFeeCents: codFeeCents ?? undefined,
       totalChargesCents: totalChargesCents ?? undefined,
       serviceLevel: data.serviceLevel ?? undefined,
+      ...(extraData as Partial<Prisma.DomesticWarehouseShipmentCreateInput>),
       createdBy: session.userId,
     },
   });

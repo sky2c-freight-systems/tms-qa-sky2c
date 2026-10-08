@@ -8,6 +8,7 @@ import { autoCreateInvoiceForShipment, syncInvoiceAmountToShipment } from "@/lib
 import { mapShipmentStatusToZohoStatus } from "@/lib/zohoStatusMap";
 import { updateTicket } from "@/lib/zohoDeskApi";
 import { recordStatusChange } from "@/lib/tracking";
+import { extraFieldsToPrismaData, extraFieldsZodShape } from "@/lib/shipmentZohoSections";
 
 const SHIPMENT_STATUS_VALUES = Object.values(ShipmentStatus) as [ShipmentStatus, ...ShipmentStatus[]];
 const DOMESTIC_TYPE_VALUES = Object.values(DomesticType) as [DomesticType, ...DomesticType[]];
@@ -71,6 +72,7 @@ const patchShipmentSchema = z.object({
   dryRun: z.string().nullish(),
   totalCharges: dollarAmount,
   serviceLevel: z.string().nullish(),
+  ...extraFieldsZodShape,
 });
 
 function toDateOrNull(value: string | null | undefined): Date | null {
@@ -142,6 +144,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ fi
     if (data.insuranceValue !== undefined) update.insuranceValueCents = dollarsToCents(data.insuranceValue);
     if (data.codFee !== undefined) update.codFeeCents = dollarsToCents(data.codFee);
     if (data.totalCharges !== undefined) update.totalChargesCents = dollarsToCents(data.totalCharges);
+    Object.assign(update, extraFieldsToPrismaData(data));
   } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : "Invalid value" }, { status: 400 });
   }

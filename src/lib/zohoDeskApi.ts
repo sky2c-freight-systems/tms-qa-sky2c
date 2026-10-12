@@ -55,12 +55,28 @@ async function refreshAccessToken(): Promise<CachedToken> {
   return token;
 }
 
+// After a failed refresh, further attempts fail fast for this long instead of hitting
+// Zoho again. Zoho locks out a refresh token that's retried in a tight loop ("You have
+// made too many requests continuously"), which otherwise happens when credentials are
+// wrong — every webhook made several API calls, each one re-trying the refresh.
+const REFRESH_FAILURE_COOLDOWN_MS = 5 * 60 * 1000;
+let lastRefreshFailure: { at: number; message: string } | null = null;
+
 async function getAccessToken(): Promise<string> {
   if (cachedToken && cachedToken.expiresAt > Date.now()) {
     return cachedToken.accessToken;
   }
-  const token = await refreshAccessToken();
-  return token.accessToken;
+  if (lastRefreshFailure && Date.now() - lastRefreshFailure.at < REFRESH_FAILURE_COOLDOWN_MS) {
+    throw new Error(`${lastRefreshFailure.message} (not retrying during cooldown)`);
+  }
+  try {
+    const token = await refreshAccessToken();
+    lastRefreshFailure = null;
+    return token.accessToken;
+  } catch (err) {
+    lastRefreshFailure = { at: Date.now(), message: err instanceof Error ? err.message : String(err) };
+    throw err;
+  }
 }
 
 /**
@@ -177,13 +193,13 @@ export async function pushFileNumberToZohoTicket(ticketId: string, fileNumber: s
 const PARENT_CHILD_HEADERS = { featureFlags: "lookUp" };
 
 /**
- * Full ticket, including `relationshipType` / `parentTicket` and the contact, in roughly
- * the same shape as a webhook payload — so it can go straight into createShipmentForTicket
- * for a child ticket whose own department isn't covered by the webhook.
+ * Full ticket, including `relationshipType` / `parentTicket`, in roughly the same shape as
+ * a webhook payload — so it can go straight into createShipmentForTicket for a child
+ * ticket whose own department isn't covered by the webhook. The contact isn't included
+ * (that needs a contacts scope): a child shipment takes its account from the parent.
  */
 export async function getTicketWithRelationship(ticketId: string): Promise<Record<string, unknown> | null> {
   return zohoDeskRequest<Record<string, unknown>>("GET", `/api/v1/tickets/${encodeURIComponent(ticketId)}`, {
-    searchParams: { include: "contacts" },
     headers: PARENT_CHILD_HEADERS,
   });
 }

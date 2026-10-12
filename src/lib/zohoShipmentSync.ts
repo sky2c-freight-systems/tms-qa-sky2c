@@ -269,8 +269,21 @@ export async function createShipmentForTicket(
 ): Promise<CreateShipmentResult> {
   const draft = buildTruncatedDraft(payload);
 
+  // A child ticket (Dispatch, Booking, ... raised from an Air Ops ticket) becomes a child
+  // shipment. If the parent's shipment doesn't exist yet, parentZohoTicketId is still
+  // stored and adoptWaitingChildren links it once the parent is created.
+  const hierarchy = resolveTicketHierarchy(payload);
+  if (!isParentChildEnabled()) hierarchy.parentTicketId = "";
+  else if (!hierarchy.parentTicketId) hierarchy.parentTicketId = await fetchParentTicketId(zohoTicketId);
+  const isChild = !!hierarchy.parentTicketId;
+  const parent = isChild ? await findShipmentByZohoTicketId(hierarchy.parentTicketId) : null;
+
+  // A child ticket's contact is the internal department mailbox (e.g. "Air Dispatch"),
+  // not the customer, so a child takes the parent's account instead.
   const [account, shipper, consignee, carrier] = await Promise.all([
-    draft.accountName
+    isChild
+      ? Promise.resolve(parent?.accountId ? { id: parent.accountId } : null)
+      : draft.accountName
       ? findOrCreateClient({
           name: draft.accountName,
           role: "ACCOUNT",
@@ -286,15 +299,6 @@ export async function createShipmentForTicket(
   const meta = resolveTicketMeta(payload);
   const ticketSubject = meta.subject || undefined;
   const status = mapZohoStatusToShipmentStatus(meta.status) ?? "OPEN";
-
-  // A child ticket (Dispatch, Booking, ... raised from an Air Ops ticket) becomes a child
-  // shipment. If the parent's shipment doesn't exist yet, parentZohoTicketId is still
-  // stored and adoptWaitingChildren links it once the parent is created.
-  const hierarchy = resolveTicketHierarchy(payload);
-  if (!isParentChildEnabled()) hierarchy.parentTicketId = "";
-  else if (!hierarchy.parentTicketId) hierarchy.parentTicketId = await fetchParentTicketId(zohoTicketId);
-  const isChild = !!hierarchy.parentTicketId;
-  const parent = isChild ? await findShipmentByZohoTicketId(hierarchy.parentTicketId) : null;
 
   const fileNumber = await generateFileNumber(ZOHO_DIVISION_ID, ZOHO_BUS_LINE);
 

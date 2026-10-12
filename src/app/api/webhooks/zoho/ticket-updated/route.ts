@@ -242,7 +242,8 @@ export async function POST(request: Request) {
           ? findOrCreateClient({ name: draft.consigneeName, role: "CONSIGNEE" })
           : Promise.resolve(null),
       ]);
-      if (account) updateData.accountId = account.id;
+      // A child keeps the parent's account — its own contact is a department mailbox.
+      if (account && !isChild) updateData.accountId = account.id;
       if (shipper) updateData.shipperId = shipper.id;
       if (consignee) updateData.consigneeId = consignee.id;
     }

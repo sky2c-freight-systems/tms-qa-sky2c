@@ -20,6 +20,7 @@ import {
   claimRecreationForTicket,
   fetchParentTicketId,
   findShipmentByZohoTicketId,
+  isParentChildEnabled,
   isPendingCreationClaim,
   syncChildTicketsForParent,
 } from "@/lib/zohoShipmentSync";
@@ -207,7 +208,8 @@ export async function POST(request: Request) {
     // Backfills the ticket link on shipments created before parent/child support, and
     // picks up a parent link that appears only after creation (ticket made a child later).
     const hierarchy = resolveTicketHierarchy(payload);
-    if (!hierarchy.parentTicketId && !shipment.parentZohoTicketId) {
+    if (!isParentChildEnabled()) hierarchy.parentTicketId = "";
+    else if (!hierarchy.parentTicketId && !shipment.parentZohoTicketId) {
       hierarchy.parentTicketId = await fetchParentTicketId(zohoTicketId);
     }
     updateData.zohoTicketId = zohoTicketId;

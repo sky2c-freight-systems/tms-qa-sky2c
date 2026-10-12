@@ -41,12 +41,27 @@ export async function findShipmentByZohoTicketId(zohoTicketId: string) {
   return prisma.domesticWarehouseShipment.findUnique({ where: { fileNumber: sync.fileNumber } });
 }
 
+/** Sky2C's Zoho Desk org — the only org using the Air Ops parent / department child flow. */
+const PARENT_CHILD_DEFAULT_ORG_ID = "60028198741";
+
+/**
+ * Parent/child shipments are Sky2C-only: the same code is deployed for Vhaul4u, which
+ * keeps one flat shipment per ticket. ZOHO_PARENT_CHILD_ENABLED ("true"/"false") overrides;
+ * when it's unset, the flow is on only for Sky2C's Zoho org.
+ */
+export function isParentChildEnabled(): boolean {
+  const flag = process.env.ZOHO_PARENT_CHILD_ENABLED;
+  if (flag) return flag === "true";
+  return process.env.ZOHO_DESK_ORG_ID === PARENT_CHILD_DEFAULT_ORG_ID;
+}
+
 /**
  * Webhook payloads never include the parent link, so it's read back from the ticket API.
  * Best-effort: on an API failure the ticket is treated as top-level ("") rather than
  * failing shipment creation; a later update webhook gets another chance to link it.
  */
 export async function fetchParentTicketId(zohoTicketId: string): Promise<string> {
+  if (!isParentChildEnabled()) return "";
   try {
     const ticket = await getTicketWithRelationship(zohoTicketId);
     return resolveTicketHierarchy(ticket).parentTicketId;
@@ -65,6 +80,7 @@ export async function fetchParentTicketId(zohoTicketId: string): Promise<string>
  * its own webhook at the same moment still gets exactly one shipment.
  */
 export async function syncChildTicketsForParent(parentTicketId: string): Promise<void> {
+  if (!isParentChildEnabled()) return;
   let childIds: string[];
   try {
     childIds = await listChildTicketIds(parentTicketId);
@@ -275,7 +291,8 @@ export async function createShipmentForTicket(
   // shipment. If the parent's shipment doesn't exist yet, parentZohoTicketId is still
   // stored and adoptWaitingChildren links it once the parent is created.
   const hierarchy = resolveTicketHierarchy(payload);
-  if (!hierarchy.parentTicketId) hierarchy.parentTicketId = await fetchParentTicketId(zohoTicketId);
+  if (!isParentChildEnabled()) hierarchy.parentTicketId = "";
+  else if (!hierarchy.parentTicketId) hierarchy.parentTicketId = await fetchParentTicketId(zohoTicketId);
   const isChild = !!hierarchy.parentTicketId;
   const parent = isChild ? await findShipmentByZohoTicketId(hierarchy.parentTicketId) : null;
 

@@ -233,6 +233,18 @@ model DomesticWarehouseShipment {
   status      ShipmentStatus @default(SCHEDULED)
   domesticType DomesticType
 
+  // Parent/child shipments, mirroring Zoho Desk parent/child tickets: an Air Ops ticket
+  // becomes the parent shipment, and each child ticket raised from it (Dispatch, Booking,
+  // other departments) becomes a child shipment under it. parentId is a plain scalar like
+  // the Client references below. parentZohoTicketId is kept separately because a child
+  // ticket's webhook can arrive before the parent's shipment exists — parentId is filled
+  // in once it does (see linkShipmentFamily in src/lib/zohoShipmentSync.ts).
+  parentId           String? @db.ObjectId
+  zohoTicketId       String?
+  parentZohoTicketId String?
+  zohoDepartmentId   String?
+  zohoLayoutName     String? // e.g. "Dispatch to Warehouse" — labels child rows in the list
+
   accountId     String? @db.ObjectId // Client (role=isCustomer)
   shipperId     String? @db.ObjectId // Client (role=isShipper)
   consigneeId   String? @db.ObjectId // Client (role=isConsignee)
@@ -314,6 +326,9 @@ model DomesticWarehouseShipment {
 
   @@index([status])
   @@index([divisionId, busLine])
+  @@index([parentId])
+  @@index([zohoTicketId])
+  @@index([parentZohoTicketId])
   @@index([accountId])
   @@index([shipperId])
   @@index([consigneeId])

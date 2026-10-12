@@ -119,6 +119,37 @@ export function resolveTicketMeta(payload: unknown): TicketMeta {
   };
 }
 
+export interface TicketHierarchy {
+  /** Zoho id of the parent ticket when this is a child ticket, else "". */
+  parentTicketId: string;
+  departmentId: string;
+  layoutName: string;
+}
+
+/**
+ * Extracts the parent-ticket link plus department/layout. None of the payloads captured so
+ * far are child tickets, so the exact key Zoho uses for the parent isn't confirmed yet —
+ * every plausible shape is tried. Once a real child-ticket payload is in ZohoSync.rawPayload,
+ * narrow this to the key it actually uses.
+ */
+export function resolveTicketHierarchy(payload: unknown): TicketHierarchy {
+  const p = (payload ?? {}) as Record<string, unknown>;
+  const ticket = (p.ticket ?? undefined) as Record<string, unknown> | undefined;
+  const parentKeys = ["parentTicketId", "parentId", "parentTicket_id"];
+  const parentObj = (ticket?.parent ?? ticket?.parentTicket ?? p.parent ?? p.parentTicket) as
+    | Record<string, unknown>
+    | undefined;
+  const layout = (ticket?.layoutDetails ?? p.layoutDetails) as Record<string, unknown> | undefined;
+  return {
+    parentTicketId:
+      firstNonEmpty(ticket, ...parentKeys) ||
+      firstNonEmpty(p, ...parentKeys) ||
+      (parentObj && typeof parentObj === "object" ? firstNonEmpty(parentObj, "id", "ticketId") : ""),
+    departmentId: firstNonEmpty(ticket, "departmentId") || firstNonEmpty(p, "departmentId"),
+    layoutName: firstNonEmpty(layout, "layoutName"),
+  };
+}
+
 export interface ContactInfo {
   email: string;
   phone: string;

@@ -74,7 +74,12 @@ async function getAccessToken(): Promise<string> {
 async function zohoDeskRequest<T = unknown>(
   method: string,
   path: string,
-  opts: { searchParams?: Record<string, string>; body?: unknown; treatNotFoundAsEmpty?: boolean } = {},
+  opts: {
+    searchParams?: Record<string, string>;
+    body?: unknown;
+    treatNotFoundAsEmpty?: boolean;
+    headers?: Record<string, string>;
+  } = {},
   isRetry = false
 ): Promise<T | null> {
   const apiDomain = process.env.ZOHO_DESK_API_DOMAIN ?? "https://desk.zoho.in";
@@ -93,6 +98,7 @@ async function zohoDeskRequest<T = unknown>(
       Authorization: `Zoho-oauthtoken ${accessToken}`,
       orgId,
       "Content-Type": "application/json",
+      ...opts.headers,
     },
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
   });
@@ -160,6 +166,57 @@ export async function pushFileNumberToZohoTicket(ticketId: string, fileNumber: s
   // The ZOHO_DESK_PUSH_ENABLED gate is enforced centrally in updateTicket.
   const fieldApiName = requireEnv("ZOHO_DESK_REFERENCE_NUMBER_FIELD");
   await updateTicket(ticketId, { cf: { [fieldApiName]: fileNumber } });
+}
+
+/**
+ * Zoho only includes parent/child ticket data (`relationshipType`, `parentTicket`) in
+ * ticket responses when this header is sent, and webhook payloads never carry it at all —
+ * so the parent link has to be read back through the API. See Zoho's parent-child
+ * ticketing automation example (help.zoho.com community, "Automation#26").
+ */
+const PARENT_CHILD_HEADERS = { featureFlags: "lookUp" };
+
+/**
+ * Full ticket, including `relationshipType` / `parentTicket` and the contact, in roughly
+ * the same shape as a webhook payload — so it can go straight into createShipmentForTicket
+ * for a child ticket whose own department isn't covered by the webhook.
+ */
+export async function getTicketWithRelationship(ticketId: string): Promise<Record<string, unknown> | null> {
+  return zohoDeskRequest<Record<string, unknown>>("GET", `/api/v1/tickets/${encodeURIComponent(ticketId)}`, {
+    searchParams: { include: "contacts" },
+    headers: PARENT_CHILD_HEADERS,
+  });
+}
+
+/**
+ * Ids of every child ticket of a parent ticket, via Zoho's parent-child related list
+ * (max 50 per page). The item shape isn't confirmed against this org yet, so each id is
+ * read from whichever of the plausible keys is present.
+ */
+export async function listChildTicketIds(parentTicketId: string): Promise<string[]> {
+  const PAGE = 50;
+  const ids = new Set<string>();
+  for (let from = 0; ; from += PAGE) {
+    const res = await zohoDeskRequest<{ data?: Record<string, unknown>[] }>("GET", "/api/v1/relatedListData", {
+      searchParams: {
+        module: "tickets",
+        relatedListName: "parent_child_ticketing",
+        entityId: parentTicketId,
+        from: String(from),
+        limit: String(PAGE),
+      },
+      headers: PARENT_CHILD_HEADERS,
+      treatNotFoundAsEmpty: true,
+    });
+    const items = res?.data ?? [];
+    for (const item of items) {
+      const id = item.id ?? item.entityId ?? item.ticketId;
+      if (id) ids.add(String(id));
+    }
+    if (items.length < PAGE) break;
+  }
+  ids.delete(parentTicketId);
+  return [...ids];
 }
 
 interface ZohoTicketSummary {

@@ -21,7 +21,13 @@ export async function GET() {
   }
 
   const shipments = await prisma.domesticWarehouseShipment.findMany({
-    where: { accountId: session.clientId, isActive: true },
+    // Child shipments are internal department work under the customer's order — only the
+    // top-level shipment is the customer's.
+    where: {
+      accountId: session.clientId,
+      isActive: true,
+      OR: [{ parentId: null }, { parentId: { isSet: false } }],
+    },
     orderBy: { createdAt: "desc" },
     select: {
       fileNumber: true,

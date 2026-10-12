@@ -5,6 +5,13 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import ShipmentForm, { EMPTY_SHIPMENT_FORM_VALUES, shipmentToFormValues, type ShipmentFormValues } from "@/components/ShipmentForm";
 import Spinner from "@/components/Spinner";
+import { SHIPMENT_STATUS_LABELS } from "@/lib/enumLabels";
+
+interface FamilyMember {
+  fileNumber: string;
+  status: string;
+  zohoLayoutName: string | null;
+}
 
 export default function ShipmentEditPage() {
   const params = useParams<{ fileNumber: string }>();
@@ -14,6 +21,8 @@ export default function ShipmentEditPage() {
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [parent, setParent] = useState<FamilyMember | null>(null);
+  const [children, setChildren] = useState<FamilyMember[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -26,8 +35,12 @@ export default function ShipmentEditPage() {
           return;
         }
         if (!res.ok) throw new Error("Failed to load shipment");
-        const { data } = await res.json();
-        if (!cancelled) setValues(shipmentToFormValues(data));
+        const { data, parent, children } = await res.json();
+        if (!cancelled) {
+          setValues(shipmentToFormValues(data));
+          setParent(parent ?? null);
+          setChildren(children ?? []);
+        }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load shipment");
       } finally {
@@ -55,7 +68,35 @@ export default function ShipmentEditPage() {
       <Link href="/shipments" className="mb-2 inline-block text-sm text-blue-600 hover:underline dark:text-blue-400">
         &larr; Back to Shipments
       </Link>
-      <h1 className="mb-4 text-xl font-semibold">Shipment {fileNumber}</h1>
+      <h1 className={`text-xl font-semibold ${parent || children.length ? "mb-2" : "mb-4"}`}>Shipment {fileNumber}</h1>
+      {parent && (
+        <p className={`text-sm text-zinc-500 ${children.length ? "mb-2" : "mb-4"}`}>
+          Child shipment of{" "}
+          <Link href={`/shipments/${parent.fileNumber}`} className="font-mono text-blue-600 hover:underline dark:text-blue-400">
+            {parent.fileNumber}
+          </Link>
+        </p>
+      )}
+      {children.length > 0 && (
+        <div className="mb-4 rounded border border-zinc-200 p-3 text-sm dark:border-zinc-800">
+          <p className="mb-1.5 text-xs font-medium text-zinc-500">Child shipments ({children.length})</p>
+          <ul className="space-y-1">
+            {children.map((c) => (
+              <li key={c.fileNumber} className="flex items-center gap-2">
+                <Link href={`/shipments/${c.fileNumber}`} className="font-mono text-xs text-blue-600 hover:underline dark:text-blue-400">
+                  {c.fileNumber}
+                </Link>
+                {c.zohoLayoutName && (
+                  <span className="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:bg-blue-950 dark:text-blue-300">
+                    {c.zohoLayoutName}
+                  </span>
+                )}
+                <span className="text-xs text-zinc-500">{SHIPMENT_STATUS_LABELS[c.status] ?? c.status}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {loading ? (
         <p className="flex items-center gap-2 text-sm text-zinc-500">
           <Spinner className="h-4 w-4 text-brand" />

@@ -28,7 +28,20 @@ export async function GET(_request: Request, { params }: { params: Promise<{ fil
   const shipment = await prisma.domesticWarehouseShipment.findUnique({ where: { fileNumber } });
   if (!shipment) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  return NextResponse.json({ data: shipment });
+  // Parent/child family for the header links on the shipment page.
+  const familySelect = { fileNumber: true, status: true, zohoLayoutName: true } as const;
+  const [parent, children] = await Promise.all([
+    shipment.parentId
+      ? prisma.domesticWarehouseShipment.findUnique({ where: { id: shipment.parentId }, select: familySelect })
+      : null,
+    prisma.domesticWarehouseShipment.findMany({
+      where: { parentId: shipment.id },
+      orderBy: { createdAt: "asc" },
+      select: familySelect,
+    }),
+  ]);
+
+  return NextResponse.json({ data: shipment, parent, children });
 }
 
 const dollarAmount = z.union([z.string(), z.number()]).nullish();

@@ -1,9 +1,16 @@
 import { prisma } from "@/lib/prisma";
 import { findOrCreateClient } from "@/lib/clientService";
 import { generateFileNumber } from "@/lib/numbering";
-import { buildTruncatedDraft, resolveCustomFields, resolveTicketMeta } from "@/lib/zohoMapping";
+import {
+  buildTruncatedDraft,
+  resolveCustomFields,
+  resolveTicketHierarchy,
+  resolveTicketMeta,
+  truncate,
+  MAX_TEXT_LEN,
+} from "@/lib/zohoMapping";
 import { zohoCfToSectionData } from "@/lib/shipmentZohoSections";
-import { pushFileNumberToZohoTicket } from "@/lib/zohoDeskApi";
+import { getTicketWithRelationship, listChildTicketIds, pushFileNumberToZohoTicket } from "@/lib/zohoDeskApi";
 import { autoCreateInvoiceForShipment } from "@/lib/billing";
 import { mapZohoStatusToShipmentStatus } from "@/lib/zohoStatusMap";
 import { recordTrackingEvent } from "@/lib/tracking";
@@ -21,6 +28,132 @@ import { notifyZohoTicketOfFileGenerated } from "@/lib/zohoOrderNotification";
  */
 export const ZOHO_DIVISION_ID = 99;
 export const ZOHO_BUS_LINE = 65;
+
+/**
+ * Finds the TMS shipment for a Zoho ticket. Shipments created before parent/child support
+ * have no zohoTicketId of their own, so this falls back to the ZohoSync row's fileNumber.
+ */
+export async function findShipmentByZohoTicketId(zohoTicketId: string) {
+  const direct = await prisma.domesticWarehouseShipment.findFirst({ where: { zohoTicketId } });
+  if (direct) return direct;
+  const sync = await prisma.zohoSync.findUnique({ where: { zohoTicketId }, select: { fileNumber: true } });
+  if (!sync?.fileNumber || isPendingCreationClaim(sync.fileNumber)) return null;
+  return prisma.domesticWarehouseShipment.findUnique({ where: { fileNumber: sync.fileNumber } });
+}
+
+/**
+ * Webhook payloads never include the parent link, so it's read back from the ticket API.
+ * Best-effort: on an API failure the ticket is treated as top-level ("") rather than
+ * failing shipment creation; a later update webhook gets another chance to link it.
+ */
+export async function fetchParentTicketId(zohoTicketId: string): Promise<string> {
+  try {
+    const ticket = await getTicketWithRelationship(zohoTicketId);
+    return resolveTicketHierarchy(ticket).parentTicketId;
+  } catch (err) {
+    console.error(`[zoho] could not read parent link for ticket ${zohoTicketId}:`, err);
+    return "";
+  }
+}
+
+/**
+ * Creates a child shipment for every child ticket of `parentTicketId` that has none yet,
+ * fetching each child ticket through the API. This is how children get into TMS when
+ * their department (Dispatch, Booking, ...) isn't covered by the webhook — the parent's
+ * update webhook fires, and its children are pulled from here. Uses the same ZohoSync
+ * audit row + creation claim as the webhooks, so a child ticket that also arrives through
+ * its own webhook at the same moment still gets exactly one shipment.
+ */
+export async function syncChildTicketsForParent(parentTicketId: string): Promise<void> {
+  let childIds: string[];
+  try {
+    childIds = await listChildTicketIds(parentTicketId);
+  } catch (err) {
+    console.error(`[zoho] could not list child tickets of ${parentTicketId}:`, err);
+    return;
+  }
+
+  for (const childId of childIds) {
+    const sync = await prisma.zohoSync.findUnique({ where: { zohoTicketId: childId } });
+    if (sync?.fileNumber) {
+      // Already in TMS (or being created right now) — just make sure it's linked.
+      if (!isPendingCreationClaim(sync.fileNumber)) {
+        const parent = await findShipmentByZohoTicketId(parentTicketId);
+        if (parent) {
+          await prisma.domesticWarehouseShipment.updateMany({
+            where: { fileNumber: sync.fileNumber, id: { not: parent.id } },
+            data: { parentId: parent.id, parentZohoTicketId: parentTicketId, zohoTicketId: childId },
+          });
+        }
+      }
+      continue;
+    }
+
+    try {
+      const ticket = await getTicketWithRelationship(childId);
+      if (!ticket) continue;
+      // Make sure creation sees the parent even if the response nests it differently.
+      if (!resolveTicketHierarchy(ticket).parentTicketId) ticket.parentTicketId = parentTicketId;
+      const meta = resolveTicketMeta(ticket);
+      const auditRow = {
+        zohoTicketNumber: meta.ticketNumber || undefined,
+        ticketSubject: truncate(meta.subject, MAX_TEXT_LEN),
+        ticketStatus: truncate(meta.status, MAX_TEXT_LEN),
+        rawPayload: JSON.stringify(ticket),
+      };
+      await prisma.zohoSync.upsert({
+        where: { zohoTicketId: childId },
+        create: { zohoTicketId: childId, ...auditRow, syncStatus: "PENDING" },
+        update: auditRow,
+      });
+      if (!(await claimShipmentCreationForTicket(childId))) continue;
+
+      try {
+        const result = await createShipmentForTicket(ticket, childId);
+        await prisma.zohoSync.update({
+          where: { zohoTicketId: childId },
+          data: {
+            fileNumber: result.fileNumber,
+            clientName: result.accountName,
+            origin: result.origin,
+            destination: result.destination,
+            carrier: result.carrierName,
+            contactEmail: result.contactEmail,
+            contactPhone: result.contactPhone,
+            syncStatus: "SYNCED",
+            errorMessage: null,
+          },
+        });
+      } catch (err) {
+        await prisma.zohoSync.update({
+          where: { zohoTicketId: childId },
+          data: {
+            fileNumber: null,
+            syncStatus: "FAILED",
+            errorMessage: truncate(err instanceof Error ? err.message : String(err), MAX_TEXT_LEN),
+          },
+        });
+        throw err;
+      }
+    } catch (err) {
+      console.error(`[zoho] failed to sync child ticket ${childId} of ${parentTicketId}:`, err);
+    }
+  }
+}
+
+/**
+ * After a shipment is created for a ticket, attaches any child shipments whose ticket
+ * webhook arrived first (they were stored with parentZohoTicketId but no parentId yet).
+ */
+async function adoptWaitingChildren(parentShipmentId: string, zohoTicketId: string): Promise<void> {
+  await prisma.domesticWarehouseShipment.updateMany({
+    where: {
+      parentZohoTicketId: zohoTicketId,
+      OR: [{ parentId: null }, { parentId: { isSet: false } }],
+    },
+    data: { parentId: parentShipmentId },
+  });
+}
 
 export interface CreateShipmentResult {
   fileNumber: string;
@@ -138,6 +271,14 @@ export async function createShipmentForTicket(
   const ticketSubject = meta.subject || undefined;
   const status = mapZohoStatusToShipmentStatus(meta.status) ?? "OPEN";
 
+  // A child ticket (Dispatch, Booking, ... raised from an Air Ops ticket) becomes a child
+  // shipment. If the parent's shipment doesn't exist yet, parentZohoTicketId is still
+  // stored and adoptWaitingChildren links it once the parent is created.
+  const hierarchy = resolveTicketHierarchy(payload);
+  if (!hierarchy.parentTicketId) hierarchy.parentTicketId = await fetchParentTicketId(zohoTicketId);
+  const isChild = !!hierarchy.parentTicketId;
+  const parent = isChild ? await findShipmentByZohoTicketId(hierarchy.parentTicketId) : null;
+
   const fileNumber = await generateFileNumber(ZOHO_DIVISION_ID, ZOHO_BUS_LINE);
 
   const shipment = await prisma.domesticWarehouseShipment.create({
@@ -147,6 +288,11 @@ export async function createShipmentForTicket(
       busLine: ZOHO_BUS_LINE,
       status,
       domesticType: draft.domesticType,
+      parentId: parent?.id,
+      zohoTicketId,
+      parentZohoTicketId: hierarchy.parentTicketId || undefined,
+      zohoDepartmentId: hierarchy.departmentId || undefined,
+      zohoLayoutName: hierarchy.layoutName || undefined,
       accountId: account?.id,
       shipperId: shipper?.id,
       consigneeId: consignee?.id,
@@ -174,10 +320,15 @@ export async function createShipmentForTicket(
     location: draft.origin ?? null,
   });
 
-  await autoCreateInvoiceForShipment(shipment, ticketSubject);
+  await adoptWaitingChildren(shipment.id, zohoTicketId);
 
-  await sendOrderConfirmationEmail(shipment, { contactEmail: draft.contactEmail });
-  await notifyZohoTicketOfFileGenerated(zohoTicketId, shipment.accountId, fileNumber);
+  // Billing and customer-facing notices belong to the parent shipment only — a child is
+  // an internal department ticket, and invoicing it too would bill the customer twice.
+  if (!isChild) {
+    await autoCreateInvoiceForShipment(shipment, ticketSubject);
+    await sendOrderConfirmationEmail(shipment, { contactEmail: draft.contactEmail });
+    await notifyZohoTicketOfFileGenerated(zohoTicketId, shipment.accountId, fileNumber);
+  }
 
   try {
     await pushFileNumberToZohoTicket(zohoTicketId, fileNumber);

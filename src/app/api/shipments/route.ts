@@ -73,15 +73,39 @@ export async function GET(request: Request) {
     ];
   }
 
-  const [items, total] = await Promise.all([
+  // The table lists top-level shipments only, each with its child shipments nested under
+  // it. A filter that matches a child brings in its parent, so the child stays findable.
+  const isTopLevel: Prisma.DomesticWarehouseShipmentWhereInput = {
+    OR: [{ parentId: null }, { parentId: { isSet: false } }],
+  };
+  let topLevelWhere: Prisma.DomesticWarehouseShipmentWhereInput = { AND: [where, isTopLevel] };
+  if (Object.keys(where).length > 0) {
+    const matchingChildren = await prisma.domesticWarehouseShipment.findMany({
+      where: { AND: [where, { parentId: { not: null } }] },
+      select: { parentId: true },
+    });
+    const parentIds = [...new Set(matchingChildren.map((c) => c.parentId as string))];
+    if (parentIds.length) {
+      topLevelWhere = { AND: [isTopLevel, { OR: [where, { id: { in: parentIds } }] }] };
+    }
+  }
+
+  const [parents, total] = await Promise.all([
     prisma.domesticWarehouseShipment.findMany({
-      where,
+      where: topLevelWhere,
       orderBy: { createdAt: "desc" },
       skip: (page - 1) * pageSize,
       take: pageSize,
     }),
-    prisma.domesticWarehouseShipment.count({ where }),
+    prisma.domesticWarehouseShipment.count({ where: topLevelWhere }),
   ]);
+  const children = parents.length
+    ? await prisma.domesticWarehouseShipment.findMany({
+        where: { parentId: { in: parents.map((p) => p.id) } },
+        orderBy: { createdAt: "asc" },
+      })
+    : [];
+  const items = [...parents, ...children];
 
   const clientIds = new Set<string>();
   for (const s of items) {
@@ -117,7 +141,7 @@ export async function GET(request: Request) {
     : [];
   const invoiceCountByFileNumber = new Map(invoiceCounts.map((i) => [i.fileNumber, i._count._all]));
 
-  const data = items.map((s) => ({
+  const toRow = (s: (typeof items)[number]) => ({
     ...s,
     shipperName: s.shipperId ? (nameById.get(s.shipperId) ?? null) : null,
     consigneeName: s.consigneeId ? (nameById.get(s.consigneeId) ?? null) : null,
@@ -126,6 +150,10 @@ export async function GET(request: Request) {
     zohoTicketUrl: buildZohoTicketUrl(zohoTicketIdByFileNumber.get(s.fileNumber)),
     invoiceCount: invoiceCountByFileNumber.get(s.fileNumber) ?? 0,
     quoteAmountCents: computeShipmentTotalChargesCents(s.dryRun, s.totalChargesCents),
+  });
+  const data = parents.map((p) => ({
+    ...toRow(p),
+    children: children.filter((c) => c.parentId === p.id).map(toRow),
   }));
 
   return NextResponse.json({ items: data, total, page, pageSize });

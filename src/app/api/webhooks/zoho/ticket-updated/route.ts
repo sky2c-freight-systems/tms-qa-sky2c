@@ -9,6 +9,7 @@ import {
   buildTruncatedDraft,
   extractEventEnvelope,
   resolveCustomFields,
+  resolveTicketHierarchy,
   resolveTicketMeta,
   truncate,
   MAX_TEXT_LEN,
@@ -17,7 +18,10 @@ import {
   createShipmentForTicket,
   claimShipmentCreationForTicket,
   claimRecreationForTicket,
+  fetchParentTicketId,
+  findShipmentByZohoTicketId,
   isPendingCreationClaim,
+  syncChildTicketsForParent,
 } from "@/lib/zohoShipmentSync";
 import { autoCreateInvoiceForShipment, syncInvoiceAmountToShipment } from "@/lib/billing";
 import { mapZohoStatusToShipmentStatus } from "@/lib/zohoStatusMap";
@@ -200,6 +204,22 @@ export async function POST(request: Request) {
     const mappedStatus = mapZohoStatusToShipmentStatus(meta.status);
     if (mappedStatus) updateData.status = mappedStatus;
 
+    // Backfills the ticket link on shipments created before parent/child support, and
+    // picks up a parent link that appears only after creation (ticket made a child later).
+    const hierarchy = resolveTicketHierarchy(payload);
+    if (!hierarchy.parentTicketId && !shipment.parentZohoTicketId) {
+      hierarchy.parentTicketId = await fetchParentTicketId(zohoTicketId);
+    }
+    updateData.zohoTicketId = zohoTicketId;
+    if (hierarchy.departmentId) updateData.zohoDepartmentId = hierarchy.departmentId;
+    if (hierarchy.layoutName) updateData.zohoLayoutName = hierarchy.layoutName;
+    if (hierarchy.parentTicketId && hierarchy.parentTicketId !== shipment.parentZohoTicketId) {
+      updateData.parentZohoTicketId = hierarchy.parentTicketId;
+      const parent = await findShipmentByZohoTicketId(hierarchy.parentTicketId);
+      if (parent && parent.id !== shipment.id) updateData.parentId = parent.id;
+    }
+    const isChild = !!(hierarchy.parentTicketId || shipment.parentZohoTicketId);
+
     if (draft.carrierName) {
       const carrier = await findOrCreateClient({ name: draft.carrierName, role: "CARRIER" });
       updateData.carrierId = carrier.id;
@@ -249,15 +269,19 @@ export async function POST(request: Request) {
     // skipped it back then - if this update is what finally supplies the missing
     // piece, create the invoice now. Safe to call unconditionally: it's a no-op if
     // an invoice already exists, or if the shipment still isn't eligible.
-    await autoCreateInvoiceForShipment(updatedShipment, meta.subject);
-    // Handles the opposite case - an invoice already exists and this update changed
-    // the charge amount and/or the Dry Run quote history. Also a no-op if there's no
-    // invoice yet (the call above either just created one, in which case its line
-    // items already match, or the shipment still isn't eligible for one).
-    await syncInvoiceAmountToShipment(shipment.id, {
-      totalChargesCents: draft.totalChargesCents,
-      dryRun: draft.dryRun ?? null,
-    });
+    // Child shipments are never invoiced — billing lives on the parent (see
+    // createShipmentForTicket).
+    if (!isChild) {
+      await autoCreateInvoiceForShipment(updatedShipment, meta.subject);
+      // Handles the opposite case - an invoice already exists and this update changed
+      // the charge amount and/or the Dry Run quote history. Also a no-op if there's no
+      // invoice yet (the call above either just created one, in which case its line
+      // items already match, or the shipment still isn't eligible for one).
+      await syncInvoiceAmountToShipment(shipment.id, {
+        totalChargesCents: draft.totalChargesCents,
+        dryRun: draft.dryRun ?? null,
+      });
+    }
 
     await prisma.zohoSync.update({
       where: { zohoTicketId },
@@ -272,6 +296,10 @@ export async function POST(request: Request) {
         errorMessage: null,
       },
     });
+
+    // Adding a child ticket in Zoho fires an update on the parent; pull in any children
+    // that don't have a shipment yet. Never throws — failures are logged per child.
+    if (!isChild) await syncChildTicketsForParent(zohoTicketId);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[zoho:ticket-updated] sync failed for ticket ${zohoTicketId}:`, err);

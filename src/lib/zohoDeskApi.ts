@@ -94,6 +94,8 @@ async function zohoDeskRequest<T = unknown>(
     searchParams?: Record<string, string>;
     body?: unknown;
     treatNotFoundAsEmpty?: boolean;
+    /** Extra statuses (beyond 404 via treatNotFoundAsEmpty) that mean "nothing here" for this endpoint. */
+    emptyOnStatuses?: number[];
     headers?: Record<string, string>;
   } = {},
   isRetry = false
@@ -129,6 +131,9 @@ async function zohoDeskRequest<T = unknown>(
   // that know "not found" really means "empty" for their endpoint opt into this instead of
   // getting a thrown error for what's actually the normal "no attachments" case.
   if (res.status === 404 && opts.treatNotFoundAsEmpty) {
+    return null;
+  }
+  if (opts.emptyOnStatuses?.includes(res.status)) {
     return null;
   }
 
@@ -179,7 +184,9 @@ export async function updateTicket(ticketId: string, payload: Record<string, unk
  * the file number into the wrong field instead of failing loudly.
  */
 export async function pushFileNumberToZohoTicket(ticketId: string, fileNumber: string): Promise<void> {
-  // The ZOHO_DESK_PUSH_ENABLED gate is enforced centrally in updateTicket.
+  // The ZOHO_DESK_PUSH_ENABLED gate is enforced centrally in updateTicket; checked here too
+  // so a deployment with push turned off doesn't also need the field name configured.
+  if (process.env.ZOHO_DESK_PUSH_ENABLED !== "true") return;
   const fieldApiName = requireEnv("ZOHO_DESK_REFERENCE_NUMBER_FIELD");
   await updateTicket(ticketId, { cf: { [fieldApiName]: fileNumber } });
 }
@@ -206,8 +213,8 @@ export async function getTicketWithRelationship(ticketId: string): Promise<Recor
 
 /**
  * Ids of every child ticket of a parent ticket, via Zoho's parent-child related list
- * (max 50 per page). The item shape isn't confirmed against this org yet, so each id is
- * read from whichever of the plausible keys is present.
+ * (max 50 per page). Confirmed live against Sky2C's org: `{ data: [{ id, ticketNumber,
+ * relationshipType: "Child", ... }] }`, paged with from=0.
  */
 export async function listChildTicketIds(parentTicketId: string): Promise<string[]> {
   const PAGE = 50;
@@ -223,10 +230,13 @@ export async function listChildTicketIds(parentTicketId: string): Promise<string
       },
       headers: PARENT_CHILD_HEADERS,
       treatNotFoundAsEmpty: true,
+      // Confirmed live: a ticket that isn't a parent gets 422 "entityId is invalid"
+      // rather than an empty list.
+      emptyOnStatuses: [422],
     });
     const items = res?.data ?? [];
     for (const item of items) {
-      const id = item.id ?? item.entityId ?? item.ticketId;
+      const id = item.id;
       if (id) ids.add(String(id));
     }
     if (items.length < PAGE) break;

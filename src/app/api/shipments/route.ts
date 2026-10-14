@@ -10,6 +10,7 @@ import { autoCreateInvoiceForShipment, computeShipmentTotalChargesCents } from "
 import { buildZohoTicketUrl } from "@/lib/zohoTicketUrl";
 import { sendOrderConfirmationEmail } from "@/lib/orderConfirmationEmail";
 import { extraFieldsToPrismaData, extraFieldsZodShape } from "@/lib/shipmentZohoSections";
+import { sanitizeZohoFields } from "@/lib/shipmentLayoutFields";
 
 const DOMESTIC_TYPE_VALUES = Object.values(DomesticType) as [DomesticType, ...DomesticType[]];
 const SHIPMENT_STATUS_VALUES = Object.values(ShipmentStatus) as [ShipmentStatus, ...ShipmentStatus[]];
@@ -197,6 +198,8 @@ const createShipmentSchema = z.object({
   totalCharges: dollarAmount,
   serviceLevel: z.string().nullish(),
   ...extraFieldsZodShape,
+  zohoLayoutName: z.string().nullish(),
+  zohoFields: z.record(z.string(), z.unknown()).nullish(),
 });
 
 function toDateOrNull(value: string | null | undefined): Date | null {
@@ -295,6 +298,8 @@ export async function POST(request: Request) {
       codFeeCents: codFeeCents ?? undefined,
       totalChargesCents: totalChargesCents ?? undefined,
       serviceLevel: data.serviceLevel ?? undefined,
+      zohoLayoutName: data.zohoLayoutName ?? undefined,
+      zohoFields: data.zohoFields ? sanitizeZohoFields(data.zohoFields) : undefined,
       ...(extraData as Partial<Prisma.DomesticWarehouseShipmentCreateInput>),
       createdBy: session.userId,
     },

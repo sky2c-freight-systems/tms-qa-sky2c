@@ -28,6 +28,7 @@ import { autoCreateInvoiceForShipment, syncInvoiceAmountToShipment } from "@/lib
 import { mapZohoStatusToShipmentStatus } from "@/lib/zohoStatusMap";
 import { recordStatusChange } from "@/lib/tracking";
 import { zohoCfToSectionData } from "@/lib/shipmentZohoSections";
+import { asZohoFields, zohoCfToLayoutFields } from "@/lib/shipmentLayoutFields";
 
 /**
  * Zoho Desk "Ticket_Update" webhook. Same body shape as ticket-created plus a
@@ -195,6 +196,9 @@ export async function POST(request: Request) {
       shipAt: draft.shipAt ?? undefined,
       // Dispatch / Pickup section fields (src/lib/shipmentZohoSections.ts).
       ...zohoCfToSectionData(resolveCustomFields(payload)),
+      // Remaining layout fields (src/lib/shipmentLayoutFields.ts), merged so a field the
+      // payload doesn't carry keeps its stored value.
+      zohoFields: { ...asZohoFields(shipment.zohoFields), ...zohoCfToLayoutFields(resolveCustomFields(payload)) },
     };
 
     // Zoho ticket status -> shipment status, one leg of the two-way sync (the other

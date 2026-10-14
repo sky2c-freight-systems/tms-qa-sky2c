@@ -10,6 +10,7 @@ import {
   MAX_TEXT_LEN,
 } from "@/lib/zohoMapping";
 import { zohoCfToSectionData } from "@/lib/shipmentZohoSections";
+import { zohoCfToLayoutFields } from "@/lib/shipmentLayoutFields";
 import { getTicketWithRelationship, listChildTicketIds, pushFileNumberToZohoTicket } from "@/lib/zohoDeskApi";
 import { autoCreateInvoiceForShipment } from "@/lib/billing";
 import { mapZohoStatusToShipmentStatus } from "@/lib/zohoStatusMap";
@@ -327,6 +328,7 @@ export async function createShipmentForTicket(
       totalChargesCents: draft.totalChargesCents ?? undefined,
       shipAt: draft.shipAt ?? undefined,
       ...zohoCfToSectionData(resolveCustomFields(payload)),
+      zohoFields: zohoCfToLayoutFields(resolveCustomFields(payload)),
     },
   });
 

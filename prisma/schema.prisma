@@ -243,7 +243,10 @@ model DomesticWarehouseShipment {
   zohoTicketId       String?
   parentZohoTicketId String?
   zohoDepartmentId   String?
-  zohoLayoutName     String? // e.g. "Dispatch to Warehouse" — labels child rows in the list
+  zohoLayoutName     String? // e.g. "Via Warehouse" — picks the form layout; labels child rows in the list
+  // Zoho layout fields with no column of their own, keyed by Zoho API name (cf_*) — see
+  // src/lib/shipmentLayoutFields.ts. Fields that do have a column are stored there instead.
+  zohoFields         Json?
 
   accountId     String? @db.ObjectId // Client (role=isCustomer)
   shipperId     String? @db.ObjectId // Client (role=isShipper)

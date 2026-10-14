@@ -9,6 +9,7 @@ import { mapShipmentStatusToZohoStatus } from "@/lib/zohoStatusMap";
 import { updateTicket } from "@/lib/zohoDeskApi";
 import { recordStatusChange } from "@/lib/tracking";
 import { extraFieldsToPrismaData, extraFieldsZodShape } from "@/lib/shipmentZohoSections";
+import { sanitizeZohoFields } from "@/lib/shipmentLayoutFields";
 
 const SHIPMENT_STATUS_VALUES = Object.values(ShipmentStatus) as [ShipmentStatus, ...ShipmentStatus[]];
 const DOMESTIC_TYPE_VALUES = Object.values(DomesticType) as [DomesticType, ...DomesticType[]];
@@ -86,6 +87,8 @@ const patchShipmentSchema = z.object({
   totalCharges: dollarAmount,
   serviceLevel: z.string().nullish(),
   ...extraFieldsZodShape,
+  zohoLayoutName: z.string().nullish(),
+  zohoFields: z.record(z.string(), z.unknown()).nullish(),
 });
 
 function toDateOrNull(value: string | null | undefined): Date | null {
@@ -146,6 +149,9 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ fi
   if (data.insurance !== undefined) update.insurance = data.insurance;
   if (data.dryRun !== undefined) update.dryRun = data.dryRun;
   if (data.serviceLevel !== undefined) update.serviceLevel = data.serviceLevel;
+  if (data.zohoLayoutName !== undefined) update.zohoLayoutName = data.zohoLayoutName;
+  // The form always sends the whole object, so it replaces the stored one.
+  if (data.zohoFields !== undefined) update.zohoFields = sanitizeZohoFields(data.zohoFields ?? {});
 
   try {
     if (data.transitStartAt !== undefined) update.transitStartAt = toDateOrNull(data.transitStartAt);

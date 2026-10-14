@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode, type SubmitEvent } from "react";
+import { useEffect, useRef, useState, type ReactNode, type SubmitEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import ClientLookupField from "@/components/ClientLookupField";
@@ -23,6 +23,13 @@ import {
   type ExtraFieldFormValues,
   type ExtraFieldKey,
 } from "@/lib/shipmentZohoSections";
+import { getLayout, layoutsForShipment, type LayoutField } from "@/lib/zohoLayouts";
+import {
+  COLUMN_FOR_ZOHO_FIELD,
+  layoutFormValuesToBody,
+  zohoFieldsToFormValues,
+  type LayoutFieldFormValues,
+} from "@/lib/shipmentLayoutFields";
 
 /**
  * Shared field-set for creating/editing a DomesticWarehouseShipment. Used by both
@@ -65,6 +72,14 @@ export interface ShipmentFormValues extends ExtraFieldFormValues {
   dryRun: string;
   totalCharges: string;
   serviceLevel: string;
+  /** Zoho layout the form shows (src/lib/zohoLayouts.ts); "" or an unknown name falls back to the classic sections. */
+  zohoLayoutName: string;
+  /** Read-only here: set for child shipments, which pick from their department's layouts. */
+  parentId: string | null;
+  /** Read-only here: the Zoho department, which decides a child's layout choices. */
+  zohoDepartmentId: string | null;
+  /** Layout fields with no column of their own (`zohoFields`), by Zoho API name. */
+  layoutFields: LayoutFieldFormValues;
 }
 
 export const EMPTY_SHIPMENT_FORM_VALUES: ShipmentFormValues = {
@@ -101,6 +116,10 @@ export const EMPTY_SHIPMENT_FORM_VALUES: ShipmentFormValues = {
   dryRun: "",
   totalCharges: "",
   serviceLevel: "",
+  zohoLayoutName: "",
+  parentId: null,
+  zohoDepartmentId: null,
+  layoutFields: {},
   ...emptyExtraFieldValues(),
 };
 
@@ -156,6 +175,10 @@ export function shipmentToFormValues(record: Record<string, unknown> | null | un
     dryRun: str(record.dryRun),
     totalCharges: centsToDollarString(record.totalChargesCents),
     serviceLevel: str(record.serviceLevel),
+    zohoLayoutName: str(record.zohoLayoutName),
+    parentId: idOrNull(record.parentId),
+    zohoDepartmentId: idOrNull(record.zohoDepartmentId),
+    layoutFields: zohoFieldsToFormValues(record.zohoFields, toDatetimeLocal),
     ...extraFieldsToFormValues(record, toDatetimeLocal),
   };
 }
@@ -204,6 +227,8 @@ export function shipmentFormValuesToBody(values: ShipmentFormValues): Record<str
     dryRun: orNull(values.dryRun),
     totalCharges: orNull(values.totalCharges),
     serviceLevel: orNull(values.serviceLevel),
+    zohoLayoutName: orNull(values.zohoLayoutName),
+    zohoFields: layoutFormValuesToBody(values.layoutFields),
     ...extraFieldsToBody(values),
   };
 }
@@ -353,7 +378,105 @@ function PicklistField({
   return <SelectField label={label} value={value} onChange={onChange} options={all.map((o) => ({ value: o, label: o }))} disabled={disabled} />;
 }
 
-/** Multiselect as toggle chips; value is the options joined with ";" (Zoho's encoding). */
+/** Above this many options a multiselect renders as a dropdown checklist instead of chips. */
+const MULTISELECT_CHIP_LIMIT = 6;
+
+/**
+ * Multiselect for long option lists (e.g. Zoho's Rebook Reasons / Escalation Reason):
+ * a single box summarising the selection that opens a searchable checklist.
+ */
+function MultiSelectDropdown({
+  label,
+  selected,
+  options,
+  onToggle,
+  onClear,
+  disabled,
+}: {
+  label: string;
+  selected: string[];
+  options: string[];
+  onToggle: (opt: string) => void;
+  onClear: () => void;
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onPointerDown(e: PointerEvent) {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  const q = query.trim().toLowerCase();
+  const visible = q ? options.filter((o) => o.toLowerCase().includes(q)) : options;
+  const summary = selected.length === 0 ? "—" : selected.length === 1 ? selected[0] : `${selected.length} selected`;
+
+  return (
+    <div ref={rootRef} className="relative flex flex-col gap-1">
+      <span className={fieldLabelClass}>{label}</span>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        title={selected.join(", ")}
+        className={`${inputClass} flex items-center justify-between gap-2 text-left`}
+      >
+        <span className={`truncate ${selected.length ? "" : "text-zinc-400"}`}>{summary}</span>
+        <svg viewBox="0 0 20 20" fill="currentColor" className={`h-4 w-4 shrink-0 text-zinc-500 transition-transform ${open ? "rotate-180" : ""}`} aria-hidden>
+          <path d="M5.3 7.3a1 1 0 0 1 1.4 0L10 10.6l3.3-3.3a1 1 0 1 1 1.4 1.4l-4 4a1 1 0 0 1-1.4 0l-4-4a1 1 0 0 1 0-1.4Z" />
+        </svg>
+      </button>
+      {open && (
+        <div className="absolute top-full z-20 mt-1 w-full min-w-64 rounded border border-zinc-300 bg-white shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+          <div className="flex items-center gap-2 border-b border-zinc-200 p-2 dark:border-zinc-800">
+            <input
+              autoFocus
+              className={`${inputClass} w-full py-1 text-xs`}
+              placeholder="Search..."
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+            {selected.length > 0 && (
+              <button type="button" onClick={onClear} className="shrink-0 text-xs text-blue-600 hover:underline dark:text-blue-400">
+                Clear
+              </button>
+            )}
+          </div>
+          <ul className="max-h-60 overflow-auto py-1">
+            {visible.map((opt) => (
+              <li key={opt}>
+                <label className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800">
+                  <input type="checkbox" className="h-4 w-4 shrink-0" checked={selected.includes(opt)} onChange={() => onToggle(opt)} />
+                  <span>{opt}</span>
+                </label>
+              </li>
+            ))}
+            {visible.length === 0 && <li className="px-3 py-2 text-xs text-zinc-500">No matches</li>}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Multiselect; value is the options joined with ";" (Zoho's encoding). Short lists render
+ * as toggle chips, long ones as a dropdown checklist (MultiSelectDropdown).
+ */
 function MultiSelectField({
   label,
   value,
@@ -372,6 +495,18 @@ function MultiSelectField({
   function toggle(opt: string) {
     const next = selected.includes(opt) ? selected.filter((s) => s !== opt) : [...selected, opt];
     onChange(next.join(";"));
+  }
+  if (all.length > MULTISELECT_CHIP_LIMIT) {
+    return (
+      <MultiSelectDropdown
+        label={label}
+        selected={selected}
+        options={all}
+        onToggle={toggle}
+        onClear={() => onChange("")}
+        disabled={disabled}
+      />
+    );
   }
   return (
     <div className="flex flex-col gap-1">
@@ -422,6 +557,60 @@ function ExtraField({
       return <MultiSelectField {...common} options={field.options ?? []} />;
     case "datetime":
       return <DateTimeField {...common} />;
+    case "decimal":
+      return <TextField {...common} placeholder="0" />;
+    case "currency":
+      return <TextField {...common} placeholder="0.00" />;
+    default:
+      return <TextField {...common} />;
+  }
+}
+
+function DateField({ label, value, onChange, disabled }: { label: string; value: string; onChange: (v: string) => void; disabled?: boolean }) {
+  return (
+    <label className="flex flex-col gap-1">
+      <span className={fieldLabelClass}>{label}</span>
+      <input type="date" className={inputClass} value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)} />
+    </label>
+  );
+}
+
+/** Checkbox; value is "true" or "" like every other form string. */
+function BooleanField({ label, value, onChange, disabled }: { label: string; value: string; onChange: (v: string) => void; disabled?: boolean }) {
+  return (
+    <label className="flex items-center gap-2 self-end py-1.5">
+      <input type="checkbox" className="h-4 w-4" checked={value === "true"} disabled={disabled} onChange={(e) => onChange(e.target.checked ? "true" : "")} />
+      <span className={fieldLabelClass}>{label}</span>
+    </label>
+  );
+}
+
+/** A layout field stored in `zohoFields` (no Shipment column of its own). */
+function LayoutFieldInput({
+  field,
+  value,
+  onChange,
+  disabled,
+}: {
+  field: LayoutField;
+  value: string;
+  onChange: (v: string) => void;
+  disabled?: boolean;
+}) {
+  const common = { label: field.label, value, onChange, disabled };
+  switch (field.type) {
+    case "textarea":
+      return <TextAreaField {...common} />;
+    case "picklist":
+      return <PicklistField {...common} options={field.options ?? []} />;
+    case "multiselect":
+      return <MultiSelectField {...common} options={field.options ?? []} />;
+    case "datetime":
+      return <DateTimeField {...common} />;
+    case "date":
+      return <DateField {...common} />;
+    case "boolean":
+      return <BooleanField {...common} />;
     case "decimal":
       return <TextField {...common} placeholder="0" />;
     case "currency":
@@ -521,6 +710,41 @@ export default function ShipmentForm({ mode, fileNumber, initialValues, lockDome
     }
   }
 
+  // One field of the selected Zoho layout: column-backed fields edit their Shipment column
+  // (shown with the layout's label and options), the rest edit `layoutFields`.
+  function renderLayoutField(field: LayoutField) {
+    const backing = COLUMN_FOR_ZOHO_FIELD.get(field.apiName);
+    if (backing?.kind === "existing") return <div key={field.apiName}>{renderExisting(backing.key, field.label)}</div>;
+    if (backing?.kind === "extra") {
+      const key = backing.field.key as ExtraFieldKey;
+      return (
+        <ExtraField
+          key={field.apiName}
+          field={{ ...backing.field, label: field.label, options: field.options ?? backing.field.options }}
+          value={values[key]}
+          onChange={(v) => set(key, v)}
+          disabled={saving}
+        />
+      );
+    }
+    return (
+      <LayoutFieldInput
+        key={field.apiName}
+        field={field}
+        value={values.layoutFields[field.apiName] ?? ""}
+        onChange={(v) => set("layoutFields", { ...values.layoutFields, [field.apiName]: v })}
+        disabled={saving}
+      />
+    );
+  }
+
+  const layout = getLayout(values.zohoLayoutName);
+  // Top-level shipments pick an Air Ops layout, children one of their department's. A stored
+  // value outside that list (e.g. an older top-level shipment made from a Dispatch ticket)
+  // stays visible as its own option.
+  const layoutOptions = layoutsForShipment(!!values.parentId, values.zohoDepartmentId).map((l) => ({ value: l.name, label: l.name }));
+  if (values.zohoLayoutName && !layoutOptions.some((o) => o.value === values.zohoLayoutName)) layoutOptions.push({ value: values.zohoLayoutName, label: values.zohoLayoutName });
+
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
       <Section title="Identification">
@@ -548,6 +772,7 @@ export default function ShipmentForm({ mode, fileNumber, initialValues, lockDome
           options={toOptions(DOMESTIC_TYPE_LABELS)}
           disabled={mode === "create" && lockDomesticType}
         />
+        <SelectField label="Layout" value={values.zohoLayoutName} onChange={(v) => set("zohoLayoutName", v)} options={layoutOptions} disabled={saving} />
       </Section>
 
       <Section title="Parties">
@@ -556,7 +781,13 @@ export default function ShipmentForm({ mode, fileNumber, initialValues, lockDome
         <ClientLookupField label="Consignee" role="CONSIGNEE" value={values.consigneeId} onChange={(id) => set("consigneeId", id)} disabled={saving} />
       </Section>
 
-      {ZOHO_SECTIONS.map((section) => (
+      {layout
+        ? layout.sections.map((section) => (
+            <Section key={section.title} title={section.title}>
+              {section.fields.map(renderLayoutField)}
+            </Section>
+          ))
+        : ZOHO_SECTIONS.map((section) => (
         <Section key={section.title} title={section.title}>
           {section.items.map((item) =>
             item.kind === "existing" ? (

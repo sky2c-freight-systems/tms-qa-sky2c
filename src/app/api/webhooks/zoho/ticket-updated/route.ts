@@ -1,5 +1,6 @@
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { randomUUID } from "crypto";
+import { autoGeneratePickupBol } from "@/lib/pickupBol";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { findOrCreateClient } from "@/lib/clientService";
@@ -256,6 +257,8 @@ export async function POST(request: Request) {
       where: { fileNumber: syncRow.fileNumber },
       data: updateData,
     });
+    // Refresh the Pickup BOL when the auto-generate setting is on (after the response).
+    after(() => autoGeneratePickupBol(updatedShipment.id));
 
     // `shipment` was read before this update, so its status is the pre-update value —
     // exactly what recordStatusChange needs to tell a real transition from a no-op

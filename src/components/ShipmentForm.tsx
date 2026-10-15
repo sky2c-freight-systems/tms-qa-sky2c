@@ -739,6 +739,9 @@ export default function ShipmentForm({ mode, fileNumber, initialValues, lockDome
   }
 
   const layout = getLayout(values.zohoLayoutName);
+  // TMS's own fields that a Zoho layout field duplicates are hidden while that layout is
+  // shown — the Zoho field is the one that syncs.
+  const layoutHas = (apiName: string) => !!layout?.sections.some((s) => s.fields.some((f) => f.apiName === apiName));
   // Top-level shipments pick an Air Ops layout, children one of their department's. A stored
   // value outside that list (e.g. an older top-level shipment made from a Dispatch ticket)
   // stays visible as its own option.
@@ -820,7 +823,9 @@ export default function ShipmentForm({ mode, fileNumber, initialValues, lockDome
         <DateTimeField label="Transit Start" value={values.transitStartAt} onChange={(v) => set("transitStartAt", v)} min={minDatetime} disabled={saving} />
         <DateTimeField label="Transit End" value={values.transitEndAt} onChange={(v) => set("transitEndAt", v)} min={minDatetime} disabled={saving} />
         <DateTimeField label="Cutoff At" value={values.cutoffAt} onChange={(v) => set("cutoffAt", v)} min={minDatetime} disabled={saving} />
-        <DateTimeField label="ETA" value={values.etaAt} onChange={(v) => set("etaAt", v)} min={minDatetime} disabled={saving} />
+        {!layoutHas("cf_eta") && (
+          <DateTimeField label="ETA" value={values.etaAt} onChange={(v) => set("etaAt", v)} min={minDatetime} disabled={saving} />
+        )}
         <DateTimeField label="ATD" value={values.atdAt} onChange={(v) => set("atdAt", v)} min={minDatetime} disabled={saving} />
       </Section>
 

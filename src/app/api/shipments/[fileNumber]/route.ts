@@ -10,6 +10,7 @@ import { updateTicket } from "@/lib/zohoDeskApi";
 import { recordStatusChange } from "@/lib/tracking";
 import { extraFieldsToPrismaData, extraFieldsZodShape } from "@/lib/shipmentZohoSections";
 import { sanitizeZohoFields } from "@/lib/shipmentLayoutFields";
+import { isDispatchShipment } from "@/lib/pickupBol";
 
 const SHIPMENT_STATUS_VALUES = Object.values(ShipmentStatus) as [ShipmentStatus, ...ShipmentStatus[]];
 const DOMESTIC_TYPE_VALUES = Object.values(DomesticType) as [DomesticType, ...DomesticType[]];
@@ -42,7 +43,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ fil
     }),
   ]);
 
-  return NextResponse.json({ data: shipment, parent, children });
+  return NextResponse.json({ data: shipment, parent, children, isDispatch: isDispatchShipment(shipment) });
 }
 
 const dollarAmount = z.union([z.string(), z.number()]).nullish();

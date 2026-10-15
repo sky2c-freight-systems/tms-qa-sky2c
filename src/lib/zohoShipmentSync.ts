@@ -1,5 +1,7 @@
+import { after } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { findOrCreateClient } from "@/lib/clientService";
+import { autoGeneratePickupBol } from "@/lib/pickupBol";
 import { generateFileNumber } from "@/lib/numbering";
 import {
   buildTruncatedDraft,
@@ -344,6 +346,10 @@ export async function createShipmentForTicket(
   });
 
   await adoptWaitingChildren(shipment.id, zohoTicketId);
+
+  // Pickup BOL for Dispatch shipments when the auto-generate setting is on. Runs after the
+  // webhook has responded — rendering a PDF must not hold up Zoho's request.
+  after(() => autoGeneratePickupBol(shipment.id));
 
   // Billing and customer-facing notices belong to the parent shipment only — a child is
   // an internal department ticket, and invoicing it too would bill the customer twice.

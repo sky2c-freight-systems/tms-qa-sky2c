@@ -326,6 +326,7 @@ model DomesticWarehouseShipment {
   arInvoices      ArInvoice[]
   deliveryOrders  DeliveryOrder[]
   trackingEvents  ShipmentTrackingEvent[]
+  generatedDocuments GeneratedDocument[]
 
   @@index([status])
   @@index([divisionId, busLine])
@@ -605,6 +606,44 @@ model QboConnection {
   environment            String   @default("sandbox") // "sandbox" | "production"
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Generated documents & app settings — see src/lib/pickupBol.ts
+// ---------------------------------------------------------------------------
+
+enum GeneratedDocumentSource {
+  MANUAL // an operator pressed "Generate BOL"
+  AUTO // created by the auto-generate setting on a Zoho ticket create/update
+}
+
+/// A PDF this app generated and keeps itself (not a Zoho ticket attachment). Rows are
+/// never updated: regenerating creates a new row, so earlier versions stay downloadable.
+model GeneratedDocument {
+  id         String                    @id @default(auto()) @map("_id") @db.ObjectId
+  shipmentId String                    @db.ObjectId
+  shipment   DomesticWarehouseShipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  fileNumber String
+  docType    String // "pickup-bol"
+  fileName   String
+  pdf        Bytes
+  /// Hash of the data the document was rendered from — auto-generation skips a new
+  /// version when nothing on the document changed.
+  dataHash   String
+  source     GeneratedDocumentSource
+  createdBy  String?                   @db.ObjectId
+  createdAt  DateTime                  @default(now())
+
+  @@index([shipmentId, docType, createdAt])
+}
+
+/// App-wide key/value settings toggled from the UI (e.g. "autoPickupBol").
+model AppSetting {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  key       String   @unique
+  value     Json
+  updatedBy String?  @db.ObjectId
+  updatedAt DateTime @updatedAt
 }
 
 // ---------------------------------------------------------------------------

@@ -24,6 +24,8 @@ interface ShipmentRow {
   invoiceCount: number;
   /** Zoho layout of the ticket behind this shipment, e.g. "Dispatch to Warehouse". */
   zohoLayoutName: string | null;
+  /** Zoho "Ref Number"; null until the ticket has synced since layouts were added. */
+  refNumber: string | null;
   /** Child shipments (Dispatch, Booking, ... tickets raised from this one); only on top-level rows. */
   children?: ShipmentRow[];
 }
@@ -187,6 +189,7 @@ export default function ShipmentsPage() {
             )}
           </div>
         </td>
+        <td className="px-3 py-2 font-mono text-xs text-zinc-600 dark:text-zinc-400">{s.refNumber ?? "—"}</td>
         <td className="px-3 py-2">
           <select
             className="rounded border border-zinc-300 bg-transparent px-1.5 py-1 text-xs disabled:opacity-50 dark:border-zinc-700"
@@ -290,6 +293,7 @@ export default function ShipmentsPage() {
           <thead className="bg-zinc-50 dark:bg-zinc-800">
             <tr>
               <th className="px-3 py-2 text-left font-medium">File #</th>
+              <th className="px-3 py-2 text-left font-medium">Ref #</th>
               <th className="px-3 py-2 text-left font-medium">Status</th>
               <th className="px-3 py-2 text-left font-medium">Type</th>
               <th className="px-3 py-2 text-left font-medium">Account</th>
@@ -313,7 +317,7 @@ export default function ShipmentsPage() {
             })}
             {!loading && rows.length === 0 && (
               <tr>
-                <td colSpan={9} className="px-3 py-6 text-center text-zinc-500">
+                <td colSpan={10} className="px-3 py-6 text-center text-zinc-500">
                   No shipments found.
                 </td>
               </tr>

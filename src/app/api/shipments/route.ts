@@ -10,7 +10,7 @@ import { autoCreateInvoiceForShipment, computeShipmentTotalChargesCents } from "
 import { buildZohoTicketUrl } from "@/lib/zohoTicketUrl";
 import { sendOrderConfirmationEmail } from "@/lib/orderConfirmationEmail";
 import { extraFieldsToPrismaData, extraFieldsZodShape } from "@/lib/shipmentZohoSections";
-import { sanitizeZohoFields } from "@/lib/shipmentLayoutFields";
+import { asZohoFields, sanitizeZohoFields } from "@/lib/shipmentLayoutFields";
 
 const DOMESTIC_TYPE_VALUES = Object.values(DomesticType) as [DomesticType, ...DomesticType[]];
 const SHIPMENT_STATUS_VALUES = Object.values(ShipmentStatus) as [ShipmentStatus, ...ShipmentStatus[]];
@@ -151,6 +151,8 @@ export async function GET(request: Request) {
     zohoTicketUrl: buildZohoTicketUrl(zohoTicketIdByFileNumber.get(s.fileNumber)),
     invoiceCount: invoiceCountByFileNumber.get(s.fileNumber) ?? 0,
     quoteAmountCents: computeShipmentTotalChargesCents(s.dryRun, s.totalChargesCents),
+    // Zoho "Ref Number" (cf_ref_number), kept in zohoFields — see src/lib/shipmentLayoutFields.ts.
+    refNumber: (asZohoFields(s.zohoFields).cf_ref_number as string | null | undefined) ?? null,
   });
   const data = parents.map((p) => ({
     ...toRow(p),

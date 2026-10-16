@@ -113,9 +113,39 @@ export function buildPickupBolData(
     remarks,
     shipper: fromWarehouse ? warehouse : pickup,
     consignee: toPort ? portDrop : warehouse,
-    customerRef: str(shipment.pickupRefNumber),
+    // Not mapped to any Zoho field — printed blank, as on the paper BOL.
+    customerRef: "",
     rows: cargoRows(str(shipment.palletsDimensions), str(shipment.cargoDescription), shipment.grossWeight),
   };
+}
+
+/**
+ * Fields the BOL needs before it can be generated, by their Zoho labels; returns the ones
+ * that are empty (in layout order). Customer Ref. No. (always blank) and Pickup
+ * Instructions are optional — the paper BOL is issued without them.
+ */
+export function missingPickupBolFields(shipment: DomesticWarehouseShipment, carrierClientName: string | null): string[] {
+  const zf = asZohoFields(shipment.zohoFields);
+  const layout = shipment.zohoLayoutName ?? "";
+  const fromWarehouse = layout === "Warehouse to Port";
+  const toPort = layout === "Dispatch to Port" || layout === "Warehouse to Port";
+  const picklist = str(shipment.carrierPicklist);
+  const hasCarrier = (!!picklist && !["other", "na"].includes(picklist.toLowerCase())) || !!str(carrierClientName);
+
+  const required: [string, boolean][] = [
+    ["Ref Number", !!str(zf.cf_ref_number)],
+    [picklist.toLowerCase() === "other" ? "Carrier" : "Carrier-Name", hasCarrier],
+    ["Contact Details", !!str(shipment.contactDetails)],
+    ["Dock Hours", !!str(shipment.dockHours)],
+    ["SO Number", !!str(shipment.soNumber)],
+    ["Preferred Pickup Date", !!shipment.preferredPickupAt],
+    [fromWarehouse ? "Warehouse Location" : "Pickup Location", !!str(fromWarehouse ? shipment.warehouseLocation : shipment.placeOfReceipt)],
+    [toPort ? "Port Drop Location" : "Warehouse Location", !!str(toPort ? zf.cf_port_drop_location : shipment.warehouseLocation)],
+    ["Pallets x Dimensions", !!str(shipment.palletsDimensions)],
+    ["Commodity Detail", !!str(shipment.cargoDescription)],
+    ["Gross Weight", shipment.grossWeight !== null && shipment.grossWeight !== undefined],
+  ];
+  return [...new Set(required.filter(([, ok]) => !ok).map(([label]) => label))];
 }
 
 export function hashPickupBolData(data: PickupBolData): string {

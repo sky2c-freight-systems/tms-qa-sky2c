@@ -1,3 +1,5 @@
+import { tmpdir } from "os";
+import { join } from "path";
 import puppeteer from "puppeteer";
 
 /**
@@ -30,9 +32,22 @@ export async function renderHtmlToPdf(
   // --no-sandbox/--disable-setuid-sandbox are required for Chromium to launch in a
   // container (no unprivileged user-namespace sandbox available there); harmless
   // outside a container, so applied unconditionally rather than gated on NODE_ENV.
+  //
+  // The Docker image runs as a system user with no home directory, and Chromium's
+  // crashpad handler refuses to start without a writable one ("chrome_crashpad_handler:
+  // --database is required" -> "Failed to launch the browser process"). Pointing HOME and
+  // the XDG dirs at /tmp and disabling the crash reporter fixes that; /dev/shm is tiny
+  // in Docker, hence --disable-dev-shm-usage.
+  const scratchDir = join(tmpdir(), "chromium-pdf");
   const browser = await puppeteer.launch({
     headless: true,
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-crash-reporter", "--no-crashpad"],
+    env: {
+      ...process.env,
+      HOME: scratchDir,
+      XDG_CONFIG_HOME: join(scratchDir, "config"),
+      XDG_CACHE_HOME: join(scratchDir, "cache"),
+    },
   });
   try {
     const page = await browser.newPage();

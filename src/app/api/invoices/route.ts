@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/session";
 import type { InvoiceStatus, Prisma } from "@prisma/client";
+import { escapeRegex } from "@/lib/mongoText";
 
 /**
  * GET /api/invoices — global list of ArInvoice rows across every shipment, for the
@@ -26,8 +27,8 @@ export async function GET(request: Request) {
   if (status) where.status = status as InvoiceStatus;
   if (q) {
     where.OR = [
-      { fileNumber: { contains: q, mode: "insensitive" } },
-      { invoiceNo: { contains: q, mode: "insensitive" } },
+      { fileNumber: { contains: escapeRegex(q), mode: "insensitive" } },
+      { invoiceNo: { contains: escapeRegex(q), mode: "insensitive" } },
     ];
   }
 

@@ -1,6 +1,7 @@
 import type { Client, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { generateClientId } from "@/lib/numbering";
+import { escapeRegex } from "@/lib/mongoText";
 
 /**
  * Shared Client (party/company master) service. Every Shipper/Consignee/Carrier/
@@ -81,7 +82,7 @@ export async function findOrCreateClient(input: FindOrCreateClientInput): Promis
   const roleField = ROLE_FLAG_FIELD[input.role];
 
   const existing = await prisma.client.findFirst({
-    where: { name: { equals: name, mode: "insensitive" }, isActive: true },
+    where: { name: { equals: escapeRegex(name), mode: "insensitive" }, isActive: true },
   });
 
   if (existing) {
@@ -179,8 +180,8 @@ export async function searchClients(opts: ClientSearchOptions = {}): Promise<Cli
   if (opts.role) (where as Record<string, unknown>)[ROLE_FLAG_FIELD[opts.role]] = true;
   if (opts.query) {
     where.OR = [
-      { name: { contains: opts.query, mode: "insensitive" } },
-      { clientId: { contains: opts.query, mode: "insensitive" } },
+      { name: { contains: escapeRegex(opts.query), mode: "insensitive" } },
+      { clientId: { contains: escapeRegex(opts.query), mode: "insensitive" } },
     ];
   }
   return prisma.client.findMany({

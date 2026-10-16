@@ -11,6 +11,7 @@ import { buildZohoTicketUrl } from "@/lib/zohoTicketUrl";
 import { sendOrderConfirmationEmail } from "@/lib/orderConfirmationEmail";
 import { extraFieldsToPrismaData, extraFieldsZodShape } from "@/lib/shipmentZohoSections";
 import { asZohoFields, sanitizeZohoFields } from "@/lib/shipmentLayoutFields";
+import { escapeRegex } from "@/lib/mongoText";
 
 const DOMESTIC_TYPE_VALUES = Object.values(DomesticType) as [DomesticType, ...DomesticType[]];
 const SHIPMENT_STATUS_VALUES = Object.values(ShipmentStatus) as [ShipmentStatus, ...ShipmentStatus[]];
@@ -58,8 +59,8 @@ export async function GET(request: Request) {
       where: {
         fileNumber: { not: null },
         OR: [
-          { zohoTicketNumber: { contains: q, mode: "insensitive" } },
-          { zohoTicketId: { contains: q, mode: "insensitive" } },
+          { zohoTicketNumber: { contains: escapeRegex(q), mode: "insensitive" } },
+          { zohoTicketId: { contains: escapeRegex(q), mode: "insensitive" } },
         ],
       },
       select: { fileNumber: true },
@@ -67,9 +68,9 @@ export async function GET(request: Request) {
     const matchingFileNumbers = matchingSyncRows.map((r) => r.fileNumber as string);
 
     where.OR = [
-      { fileNumber: { contains: q, mode: "insensitive" } },
-      { origin: { contains: q, mode: "insensitive" } },
-      { destination: { contains: q, mode: "insensitive" } },
+      { fileNumber: { contains: escapeRegex(q), mode: "insensitive" } },
+      { origin: { contains: escapeRegex(q), mode: "insensitive" } },
+      { destination: { contains: escapeRegex(q), mode: "insensitive" } },
       ...(matchingFileNumbers.length ? [{ fileNumber: { in: matchingFileNumbers } }] : []),
     ];
   }

@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/session";
 import { createClient, ROLE_FLAG_FIELD, type ClientRole } from "@/lib/clientService";
 import { dollarsToCents } from "@/lib/money";
+import { escapeRegex } from "@/lib/mongoText";
 
 const ROLE_VALUES: [ClientRole, ...ClientRole[]] = [
   "SHIPPER",
@@ -45,9 +46,9 @@ export async function GET(request: Request) {
   if (role) (where as Record<string, unknown>)[ROLE_FLAG_FIELD[role]] = true;
   if (q) {
     where.OR = [
-      { name: { contains: q, mode: "insensitive" } },
-      { clientId: { contains: q, mode: "insensitive" } },
-      { emailAddress: { contains: q, mode: "insensitive" } },
+      { name: { contains: escapeRegex(q), mode: "insensitive" } },
+      { clientId: { contains: escapeRegex(q), mode: "insensitive" } },
+      { emailAddress: { contains: escapeRegex(q), mode: "insensitive" } },
     ];
   }
 

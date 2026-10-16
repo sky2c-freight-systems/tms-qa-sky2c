@@ -1,6 +1,7 @@
 import type { Client } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { normalizeEmail, normalizePhone } from "@/lib/otp";
+import { escapeRegex } from "@/lib/mongoText";
 
 /**
  * Compares two digit-only phone strings by their last 10 digits, not full equality —
@@ -32,7 +33,7 @@ export async function findMatchingCustomerClient(
 
   if (email) {
     const byEmail = await prisma.client.findFirst({
-      where: { isCustomer: true, isActive: true, emailAddress: { equals: email, mode: "insensitive" } },
+      where: { isCustomer: true, isActive: true, emailAddress: { equals: escapeRegex(email), mode: "insensitive" } },
     });
     if (byEmail) return byEmail;
   }

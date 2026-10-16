@@ -29,12 +29,18 @@ export default function PickupBolPanel({ fileNumber }: { fileNumber: string }) {
   const [generating, setGenerating] = useState(false);
   const [togglingAuto, setTogglingAuto] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Required BOL fields still empty, as of the last load or Generate attempt. */
+  const [missing, setMissing] = useState<string[]>([]);
 
   const pdfUrl = (id: string, download = false) => `/api/shipments/${fileNumber}/bol/${id}${download ? "?download=1" : ""}`;
 
   const loadRows = useCallback(async () => {
     const res = await fetch(`/api/shipments/${fileNumber}/bol`);
-    if (res.ok) setRows((await res.json()).data);
+    if (res.ok) {
+      const body = await res.json();
+      setRows(body.data);
+      setMissing(body.missing ?? []);
+    }
   }, [fileNumber]);
 
   useEffect(() => {
@@ -55,6 +61,8 @@ export default function PickupBolPanel({ fileNumber }: { fileNumber: string }) {
     try {
       const res = await fetch(`/api/shipments/${fileNumber}/bol`, { method: "POST" });
       const body = await res.json().catch(() => ({}));
+      // Server re-checks the fields at click time (they may have been filled since load).
+      setMissing(Array.isArray(body.missing) ? body.missing : []);
       if (!res.ok) throw new Error(body.error ?? "Failed to generate BOL");
       if (tab) tab.location.href = pdfUrl(body.data.id);
       await loadRows();
@@ -119,7 +127,13 @@ export default function PickupBolPanel({ fileNumber }: { fileNumber: string }) {
         </div>
       </div>
 
-      {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
+      {missing.length > 0 ? (
+        <p className="mt-2 rounded bg-amber-50 px-2 py-1.5 text-xs text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+          <span className="font-medium">Please fill:</span> {missing.join(", ")}
+        </p>
+      ) : (
+        error && <p className="mt-2 text-xs text-red-600">{error}</p>
+      )}
 
       {rows.length > 0 ? (
         <ul className="mt-3 divide-y divide-zinc-100 dark:divide-zinc-800">

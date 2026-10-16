@@ -6,6 +6,7 @@ import { requireSession } from "@/lib/session";
 import { generateQuoteNumber } from "@/lib/numbering";
 import { dollarsToCents } from "@/lib/money";
 import { QUOTE_STATUS_VALUES } from "@/lib/quoteAccessorials";
+import { escapeRegex } from "@/lib/mongoText";
 
 const INCOTERMS_VALUES = ["CFR", "CIF", "CIP", "CPT", "DAP", "DAT", "DDP", "EXW", "FAS", "FCA", "FOB"] as const;
 
@@ -44,10 +45,10 @@ export async function GET(request: Request) {
   if (q) {
     const asNumber = Number(q);
     where.OR = [
-      { contactName: { contains: q, mode: "insensitive" } },
-      { contactEmail: { contains: q, mode: "insensitive" } },
-      { pickupLocation: { contains: q, mode: "insensitive" } },
-      { finalDestination: { contains: q, mode: "insensitive" } },
+      { contactName: { contains: escapeRegex(q), mode: "insensitive" } },
+      { contactEmail: { contains: escapeRegex(q), mode: "insensitive" } },
+      { pickupLocation: { contains: escapeRegex(q), mode: "insensitive" } },
+      { finalDestination: { contains: escapeRegex(q), mode: "insensitive" } },
       ...(Number.isFinite(asNumber) && q !== "" ? [{ quoteNumber: asNumber }] : []),
     ];
   }

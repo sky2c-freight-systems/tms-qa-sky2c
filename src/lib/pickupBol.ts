@@ -1,7 +1,7 @@
 import type { DomesticWarehouseShipment, GeneratedDocumentSource } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { LAYOUT_GROUPS } from "@/lib/zohoLayouts";
-import { buildPickupBolData, hashPickupBolData } from "@/lib/pdf/pickupBolData";
+import { buildPickupBolData, hashPickupBolData, missingPickupBolFields } from "@/lib/pdf/pickupBolData";
 import { pickupBol } from "@/lib/pdf/templates/pickupBol";
 import { renderHtmlToPdf } from "@/lib/pdf/renderToPdf";
 
@@ -36,12 +36,29 @@ export async function setAutoPickupBolEnabled(enabled: boolean, userId?: string)
   });
 }
 
+/** Thrown by generatePickupBol when fields the BOL needs are empty. */
+export class MissingBolFieldsError extends Error {
+  constructor(public readonly missing: string[]) {
+    super(`Please fill: ${missing.join(", ")}`);
+    this.name = "MissingBolFieldsError";
+  }
+}
+
+async function carrierClientName(shipment: DomesticWarehouseShipment): Promise<string | null> {
+  if (!shipment.carrierId) return null;
+  const carrier = await prisma.client.findUnique({ where: { id: shipment.carrierId }, select: { name: true } });
+  return carrier?.name ?? null;
+}
+
 async function renderForShipment(shipment: DomesticWarehouseShipment) {
-  const carrier = shipment.carrierId
-    ? await prisma.client.findUnique({ where: { id: shipment.carrierId }, select: { name: true } })
-    : null;
-  const data = buildPickupBolData(shipment, carrier?.name ?? null);
-  return { data, hash: hashPickupBolData(data) };
+  const carrierName = await carrierClientName(shipment);
+  const data = buildPickupBolData(shipment, carrierName);
+  return { data, hash: hashPickupBolData(data), missing: missingPickupBolFields(shipment, carrierName) };
+}
+
+/** Labels of the fields still empty that the BOL needs (empty when it can be generated). */
+export async function getMissingPickupBolFields(shipment: DomesticWarehouseShipment): Promise<string[]> {
+  return missingPickupBolFields(shipment, await carrierClientName(shipment));
 }
 
 function fileNameFor(reference: string): string {
@@ -71,15 +88,21 @@ async function saveBol(
   });
 }
 
-/** "Generate BOL" button: always renders and saves a new version. */
+/**
+ * "Generate BOL" button: renders and saves a new version. Throws MissingBolFieldsError
+ * when a required field is empty — a BOL is never issued with blanks.
+ */
 export async function generatePickupBol(shipment: DomesticWarehouseShipment, userId?: string) {
-  return saveBol(shipment, "MANUAL", await renderForShipment(shipment), userId);
+  const rendered = await renderForShipment(shipment);
+  if (rendered.missing.length) throw new MissingBolFieldsError(rendered.missing);
+  return saveBol(shipment, "MANUAL", rendered, userId);
 }
 
 /**
  * Called after a Zoho webhook creates/updates a shipment. No-op unless the setting is on and
- * this is a Dispatch shipment; skips when the BOL's data is unchanged since the latest
- * version, so ordinary ticket updates don't pile up identical PDFs. Never throws.
+ * this is a Dispatch shipment; waits until every required field is filled, and skips when
+ * the BOL's data is unchanged since the latest version, so ordinary ticket updates don't
+ * pile up identical PDFs. Never throws.
  */
 export async function autoGeneratePickupBol(shipmentId: string): Promise<void> {
   try {
@@ -88,6 +111,7 @@ export async function autoGeneratePickupBol(shipmentId: string): Promise<void> {
     if (!shipment || !isDispatchShipment(shipment)) return;
 
     const rendered = await renderForShipment(shipment);
+    if (rendered.missing.length) return;
     const latest = await prisma.generatedDocument.findFirst({
       where: { shipmentId, docType: PICKUP_BOL_DOC_TYPE },
       orderBy: { createdAt: "desc" },

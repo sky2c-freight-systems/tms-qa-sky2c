@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/session";
+import { escapeRegex } from "@/lib/mongoText";
 
 /**
  * GET /api/locations/search?q=&limit=
@@ -23,9 +24,9 @@ export async function GET(request: Request) {
   const where: Prisma.LocationWhereInput = { isActive: true };
   if (q) {
     where.OR = [
-      { name: { contains: q, mode: "insensitive" } },
-      { city: { contains: q, mode: "insensitive" } },
-      { state: { contains: q, mode: "insensitive" } },
+      { name: { contains: escapeRegex(q), mode: "insensitive" } },
+      { city: { contains: escapeRegex(q), mode: "insensitive" } },
+      { state: { contains: escapeRegex(q), mode: "insensitive" } },
     ];
   }
 
